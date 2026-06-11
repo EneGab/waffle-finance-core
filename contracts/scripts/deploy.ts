@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 /**
- * Stelleth v2 deployment script.
+ * WaffleFinance v2 deployment script.
  *
  * Deploys ResolverRegistry + HTLCEscrow on the configured network and
  * writes the addresses to `deployments.<network>.json` at the repo root,

@@ -1,5 +1,5 @@
 /**
- * @fileoverview Gas Price Tracker for FusionBridge API
+ * @fileoverview Gas Price Tracker for WaffleFinance API
  * @description Real-time gas price monitoring and network congestion tracking
  */
 

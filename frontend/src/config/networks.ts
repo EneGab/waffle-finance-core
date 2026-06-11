@@ -1,5 +1,5 @@
 /**
- * Network Configuration for FusionBridge
+ * Network Configuration for WaffleFinance
  */
 
 import { resolveViteMainnetRpcUrl, resolveViteSepoliaRpcUrl } from './rpc-urls';

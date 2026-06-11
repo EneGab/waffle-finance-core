@@ -3,7 +3,7 @@ version: "3.9"
 services:
   prometheus:
     image: prom/prometheus:v2.52.0
-    container_name: stelleth_prometheus
+    container_name: wafflefinance_prometheus
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
     command:
@@ -15,9 +15,9 @@ services:
 
   grafana:
     image: grafana/grafana:10.4.3
-    container_name: stelleth_grafana
+    container_name: wafflefinance_grafana
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: stelleth
+      GF_SECURITY_ADMIN_PASSWORD: wafflefinance
       GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/coordinator.json
     volumes:
       - grafana_data:/var/lib/grafana

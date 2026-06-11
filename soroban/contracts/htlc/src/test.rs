@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use crate::{Error, HtlcContract, HtlcContractClient, Order, OrderStatus};
-use oversync_resolver_registry::{ResolverRegistry, ResolverRegistryClient};
+use wafflefinance_resolver_registry::{ResolverRegistry, ResolverRegistryClient};
 use soroban_sdk::{
     testutils::{Address as _, Ledger, LedgerInfo},
     token::{StellarAssetClient, TokenClient},
@@ -543,3 +543,4 @@ fn clear_resolver_registry_restores_permissionless_create_order() {
     );
     assert_eq!(order_id, 1);
 }
+

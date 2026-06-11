@@ -1,5 +1,5 @@
 {
-  "buildCommand": "pnpm install --no-frozen-lockfile && pnpm --filter @stelleth/sdk build && pnpm --filter @stelleth/frontend build && rm -rf dist && cp -r frontend/dist dist",
+  "buildCommand": "pnpm install --no-frozen-lockfile && pnpm --filter @wafflefinance/sdk build && pnpm --filter @wafflefinance/frontend build && rm -rf dist && cp -r frontend/dist dist",
   "outputDirectory": "dist",
   "installCommand": "npm install -g pnpm@latest",
   "rewrites": [

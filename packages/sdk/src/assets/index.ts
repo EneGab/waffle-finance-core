@@ -5,8 +5,16 @@ export interface CanonicalStellarAsset {
   issuer?: string;
 }
 
+export interface CanonicalSolanaAsset {
+  /** SPL token mint address, or NATIVE_SOL_MINT for native SOL. */
+  mint: string;
+  symbol: string;
+}
+
 export const NATIVE_ETH_ADDRESS = "0x0000000000000000000000000000000000000000";
 export const NATIVE_STELLAR_ASSET: CanonicalStellarAsset = { code: "XLM" };
+export const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
+export const NATIVE_SOL_ASSET: CanonicalSolanaAsset = { mint: NATIVE_SOL_MINT, symbol: "SOL" };
 
 const TESTNET_ETH_TO_STELLAR: Record<string, CanonicalStellarAsset> = {
   [NATIVE_ETH_ADDRESS]: NATIVE_STELLAR_ASSET,
@@ -72,4 +80,51 @@ export function resolveEthereumToken(
   const key = stellarAssetKey(stellarAsset);
   const mapping = MAPPINGS[network]?.stellarToEth || MAPPINGS.testnet.stellarToEth;
   return mapping[key] ?? NATIVE_ETH_ADDRESS;
+}
+
+// ── Solana asset mappings ─────────────────────────────────────────────────
+
+const TESTNET_ETH_TO_SOLANA: Record<string, CanonicalSolanaAsset> = {
+  [NATIVE_ETH_ADDRESS]: NATIVE_SOL_ASSET,
+  // USDC on devnet
+  "0xa0b86a33e6417c4fd30ad9d05d6b9b7cd6dd11b": {
+    mint: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+    symbol: "USDC",
+  },
+};
+
+const TESTNET_SOLANA_TO_ETH: Record<string, string> = {
+  [NATIVE_SOL_MINT]: NATIVE_ETH_ADDRESS,
+  "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU": "0xa0b86a33e6417c4fd30ad9d05d6b9b7cd6dd11b",
+};
+
+const MAINNET_ETH_TO_SOLANA: Record<string, CanonicalSolanaAsset> = {
+  [NATIVE_ETH_ADDRESS]: NATIVE_SOL_ASSET,
+};
+
+const MAINNET_SOLANA_TO_ETH: Record<string, string> = {
+  [NATIVE_SOL_MINT]: NATIVE_ETH_ADDRESS,
+};
+
+const SOLANA_MAPPINGS: Record<AssetMappingNetwork, {
+  ethToSolana: Record<string, CanonicalSolanaAsset>;
+  solanaToEth: Record<string, string>;
+}> = {
+  testnet: { ethToSolana: TESTNET_ETH_TO_SOLANA, solanaToEth: TESTNET_SOLANA_TO_ETH },
+  mainnet: { ethToSolana: MAINNET_ETH_TO_SOLANA, solanaToEth: MAINNET_SOLANA_TO_ETH },
+};
+
+export function resolveSolanaAsset(
+  ethereumTokenAddress: string,
+  network: AssetMappingNetwork = "testnet"
+): CanonicalSolanaAsset {
+  const normalized = ethereumTokenAddress.trim().toLowerCase();
+  return SOLANA_MAPPINGS[network].ethToSolana[normalized] ?? NATIVE_SOL_ASSET;
+}
+
+export function resolveEthereumTokenFromSolana(
+  mint: string,
+  network: AssetMappingNetwork = "testnet"
+): string {
+  return SOLANA_MAPPINGS[network].solanaToEth[mint] ?? NATIVE_ETH_ADDRESS;
 }

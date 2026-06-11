@@ -1,7 +1,7 @@
 {
-  "uid": "stelleth-coordinator",
-  "title": "Stelleth Coordinator",
-  "tags": ["stelleth"],
+  "uid": "wafflefinance-coordinator",
+  "title": "WaffleFinance coordinator",
+  "tags": ["wafflefinance"],
   "schemaVersion": 38,
   "version": 1,
   "refresh": "30s",

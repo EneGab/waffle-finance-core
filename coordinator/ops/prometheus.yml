@@ -3,7 +3,7 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
-  - job_name: "stelleth-coordinator"
+  - job_name: "wafflefinance-coordinator"
     static_configs:
       # Point at the coordinator. When running outside Docker, use host.docker.internal.
       - targets: ["host.docker.internal:3000"]

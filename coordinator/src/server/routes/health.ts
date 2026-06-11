@@ -7,7 +7,7 @@ export function healthRoutes(): Router {
   router.get("/health", (_req, res) => {
     res.json({
       status: "ok",
-      service: "stelleth-coordinator",
+      service: "wafflefinance-coordinator",
       version: process.env.npm_package_version ?? "0.1.0",
       uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
       timestamp: new Date().toISOString()

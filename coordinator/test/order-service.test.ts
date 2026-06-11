@@ -16,7 +16,7 @@ const VALID_ETH_ADDR = "0x1111111111111111111111111111111111111111";
 const VALID_STELLAR_ADDR = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB422";
 
 async function freshDb() {
-  const dir = mkdtempSync(resolve(tmpdir(), "stelleth-test-"));
+  const dir = mkdtempSync(resolve(tmpdir(), "wafflefinance-test-"));
   return openDatabase(`file:${dir}/test.db`);
 }
 

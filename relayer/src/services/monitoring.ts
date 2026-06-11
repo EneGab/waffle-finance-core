@@ -1,5 +1,5 @@
 /**
- * @fileoverview Uptime Monitoring System for FusionBridge
+ * @fileoverview Uptime Monitoring System for WaffleFinance
  * @description Comprehensive health monitoring, metrics collection, and alerting
  */
 

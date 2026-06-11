@@ -1,17 +1,19 @@
 {
-  "name": "@stelleth/resolver",
+  "name": "@wafflefinance/resolver",
   "version": "0.1.0",
   "private": true,
-  "description": "Reference resolver implementation for the Stelleth cross-chain bridge",
+  "description": "Reference resolver implementation for the WaffleFinance cross-chain bridge",
   "type": "module",
   "main": "dist/index.js",
   "bin": {
-    "stelleth-resolver": "dist/index.js"
+    "wafflefinance-resolver": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
     "clean": "rm -rf dist"
   },

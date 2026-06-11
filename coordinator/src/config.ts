@@ -11,7 +11,7 @@ export type Network = z.infer<typeof networkSchema>;
 const configSchema = z.object({
   network: networkSchema.default("testnet"),
   port: z.coerce.number().int().positive().default(3001),
-  databaseUrl: z.string().default("file:./stelleth.db"),
+  databaseUrl: z.string().default("file:./wafflefinance.db"),
   logLevel: z.enum(["trace", "debug", "info", "warn", "error"]).default("info"),
   corsOrigin: z.string().default("*"),
   pollIntervalMs: z.coerce.number().int().positive().default(15_000),
@@ -37,6 +37,11 @@ const configSchema = z.object({
     networkPassphrase: z.string(),
     htlcContract: z.string().optional().transform((v) => v ?? null),
     resolverRegistry: z.string().optional().transform((v) => v ?? null)
+  }),
+  solana: z.object({
+    rpcUrl: z.string().url(),
+    programId: z.string().optional().transform((v) => v ?? "PLACEHOLDER"),
+    commitment: z.enum(["processed", "confirmed", "finalized"]).default("confirmed")
   })
 });
 
@@ -49,7 +54,7 @@ export function loadConfig(): CoordinatorConfig {
   const raw = {
     network,
     port: process.env.COORDINATOR_PORT ?? process.env.RELAYER_PORT ?? "3001",
-    databaseUrl: process.env.DATABASE_URL ?? "file:./stelleth.db",
+    databaseUrl: process.env.DATABASE_URL ?? "file:./wafflefinance.db",
     logLevel: process.env.LOG_LEVEL ?? "info",
     corsOrigin: process.env.CORS_ORIGIN ?? "*",
     pollIntervalMs: process.env.COORDINATOR_POLL_INTERVAL_MS ?? "15000",
@@ -69,6 +74,11 @@ export function loadConfig(): CoordinatorConfig {
       htlcContract: process.env[isMainnet ? "SOROBAN_HTLC_MAINNET" : "SOROBAN_HTLC_TESTNET"],
       resolverRegistry:
         process.env[isMainnet ? "SOROBAN_RESOLVER_REGISTRY_MAINNET" : "SOROBAN_RESOLVER_REGISTRY_TESTNET"]
+    },
+    solana: {
+      rpcUrl: process.env.SOLANA_RPC_URL ?? (isMainnet ? "https://api.mainnet-beta.solana.com" : "https://api.devnet.solana.com"),
+      programId: process.env[isMainnet ? "SOLANA_HTLC_PROGRAM_MAINNET" : "SOLANA_HTLC_PROGRAM_TESTNET"] ?? "PLACEHOLDER",
+      commitment: (process.env.SOLANA_COMMITMENT as "processed" | "confirmed" | "finalized") ?? "confirmed"
     }
   };
 

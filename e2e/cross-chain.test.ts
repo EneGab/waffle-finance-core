@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it } from "vitest";
-import { generateSecret, hashSecret, verifyPreimage } from "@stelleth/sdk/secrets";
+import { generateSecret, hashSecret, verifyPreimage } from "@wafflefinance/sdk/secrets";
 import { EvmHtlcSim, SorobanHtlcSim, type HtlcSim } from "./sim.js";
 
 const TIMELOCK_SECONDS = 600;
@@ -34,7 +34,7 @@ describe("cross-chain HTLC differential harness", () => {
   // diverges, the corresponding case fails for that chain only.
   describe.each<{ label: string; factory: () => HtlcSim }>([
     { label: "EVM HTLCEscrow", factory: () => new EvmHtlcSim() },
-    { label: "Soroban stelleth-htlc", factory: () => new SorobanHtlcSim() }
+    { label: "Soroban wafflefinance-htlc", factory: () => new SorobanHtlcSim() }
   ])("$label", ({ factory }) => {
     let chain: HtlcSim;
     let secret: ReturnType<typeof generateSecret>;

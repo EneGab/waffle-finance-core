@@ -20,8 +20,8 @@ export type OrderStatus =
   | "failed"
   | "expired";
 
-export type Chain = "ethereum" | "stellar";
-export type Direction = "eth_to_xlm" | "xlm_to_eth";
+export type Chain = "ethereum" | "stellar" | "solana";
+export type Direction = "eth_to_xlm" | "xlm_to_eth" | "eth_to_sol" | "sol_to_eth";
 
 export interface OrderRow {
   id: number;

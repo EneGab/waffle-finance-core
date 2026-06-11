@@ -1,7 +1,7 @@
 {
-  "name": "@stelleth/contracts",
+  "name": "@wafflefinance/contracts",
   "version": "1.0.0",
-  "description": "Ethereum smart contracts for Stelleth cross-chain token swaps",
+  "description": "Ethereum smart contracts for WaffleFinance cross-chain token swaps",
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",

@@ -1,7 +1,7 @@
 #![no_std]
-//! OverSync HTLC contract for Stellar (Soroban).
+//! WaffleFinance HTLC contract for Stellar (Soroban).
 //!
-//! This contract implements the Stellar side of the OverSync cross-chain
+//! This contract implements the Stellar side of the WaffleFinance cross-chain
 //! bridge. It mirrors the semantics of the Ethereum `HTLCEscrow` contract
 //! so that a swap between Ethereum and Stellar enforces the same
 //! atomicity invariants on both chains:
@@ -461,3 +461,4 @@ impl HtlcContract {
         admin.require_auth();
     }
 }
+

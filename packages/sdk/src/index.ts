@@ -16,3 +16,11 @@ export {
   type SorobanCreateOrderInput,
   type SorobanSigner
 } from "./soroban/index.js";
+export {
+  SolanaHTLCClient,
+  NATIVE_SOL_MINT,
+  type SolanaHTLCClientOptions,
+  type SolanaCreateOrderInput,
+  type SolanaOrderData,
+  type SolanaSigner
+} from "./solana/index.js";

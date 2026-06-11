@@ -2,7 +2,7 @@ apiVersion: 1
 
 providers:
   - name: "default"
-    folder: "Stelleth"
+    folder: "WaffleFinance"
     type: file
     options:
       path: /var/lib/grafana/dashboards

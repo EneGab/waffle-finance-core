@@ -2,8 +2,8 @@
 pragma solidity ^0.8.24;
 
 /// @title IHTLCEscrow
-/// @notice Public interface for the Stelleth v2 HTLC contract.
-/// @dev The semantics mirror the Stelleth Soroban HTLC so that a swap
+/// @notice Public interface for the WaffleFinance v2 HTLC contract.
+/// @dev The semantics mirror the WaffleFinance Soroban HTLC so that a swap
 ///      between Ethereum and Stellar enforces the same hash + time-lock
 ///      invariants on both chains.
 interface IHTLCEscrow {

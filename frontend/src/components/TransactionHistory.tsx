@@ -41,7 +41,7 @@ interface TransactionHistoryProps {
   stellarAddress?: string;
 }
 
-const STORAGE_KEY = 'oversync_transactions_v2';
+const STORAGE_KEY = 'wafflefinance_transactions_v2';
 const PRODUCTION_API_BASE_URL = 'https://oversync-k36vx.ondigitalocean.app';
 const API_BASE_URL = import.meta.env.PROD
   ? ''
@@ -503,3 +503,4 @@ export default function TransactionHistory({ ethAddress, stellarAddress }: Trans
     </div>
   );
 }
+

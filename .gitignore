@@ -76,6 +76,13 @@ cache-zk/
 logs/
 temp/
 
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+wafflefinance.db
+coordinator/oversync.db
+
 # Package manager lockfiles (keep only one)
 package-lock.json
 yarn.lock

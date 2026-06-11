@@ -1,6 +1,6 @@
 # Coordinator Observability — Prometheus + Grafana
 
-Local reference stack for the Stelleth coordinator. **Not required in production** — Render deployments can point any external Prometheus at the `/metrics` endpoint.
+Local reference stack for the WaffleFinance coordinator. **Not required in production** — Render deployments can point any external Prometheus at the `/metrics` endpoint.
 
 ---
 
@@ -30,11 +30,11 @@ docker compose up -d
 # 5. Open Prometheus
 open http://localhost:9090
 
-# 6. Open Grafana  (admin / stelleth)
+# 6. Open Grafana  (admin / wafflefinance)
 open http://localhost:3001
 ```
 
-The **Stelleth Coordinator** dashboard is pre-loaded in Grafana under the *Stelleth* folder.
+The **WaffleFinance coordinator** dashboard is pre-loaded in Grafana under the *WaffleFinance* folder.
 
 ---
 
@@ -55,7 +55,7 @@ Edit `ops/prometheus.yml` if the coordinator runs on a different host/port:
 
 ```yaml
 scrape_configs:
-  - job_name: "stelleth-coordinator"
+  - job_name: "wafflefinance-coordinator"
     static_configs:
       - targets: ["host.docker.internal:3000"]   # change as needed
     metrics_path: /metrics
@@ -82,7 +82,7 @@ For a remote coordinator (e.g. Render), replace the target with the public URL a
 # coordinator/ops/prometheus.yml — add under rule_files / alerting as needed
 
 - alert: CoordinatorDown
-  expr: up{job="stelleth-coordinator"} == 0
+  expr: up{job="wafflefinance-coordinator"} == 0
   for: 2m
   labels:
     severity: critical

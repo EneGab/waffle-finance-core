@@ -1,15 +1,16 @@
 {
-  "name": "@stelleth/e2e",
+  "name": "@wafflefinance/e2e",
   "version": "0.1.0",
-  "description": "Cross-chain differential test harness (EVM HTLCEscrow ↔ Soroban stelleth-htlc). Verifies the sha256 hashlock and preimage semantics round-trip across both chain clients using the shared @stelleth/sdk secret helpers.",
+  "description": "Cross-chain differential test harness (EVM HTLCEscrow ↔ Soroban wafflefinance-htlc). Verifies the sha256 hashlock and preimage semantics round-trip across both chain clients using the shared @wafflefinance/sdk secret helpers.",
   "type": "module",
   "private": true,
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint src --ext .ts"
   },
   "dependencies": {
-    "@stelleth/sdk": "workspace:*",
+    "@wafflefinance/sdk": "workspace:*",
     "viem": "^2.21.0"
   },
   "devDependencies": {

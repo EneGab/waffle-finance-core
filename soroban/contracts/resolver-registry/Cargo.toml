@@ -1,6 +1,6 @@
 [package]
-name = "stelleth-resolver-registry"
-description = "Open resolver registry with stake + slash for Stelleth"
+name = "wafflefinance-resolver-registry"
+description = "Open resolver registry with stake + slash for WaffleFinance"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -6,7 +6,7 @@ import { SorobanListener } from "../listeners/soroban.js";
 export async function runCommand(): Promise<void> {
   const cfg = loadConfig();
   const log = getLogger(cfg.logLevel);
-  log.info({ network: cfg.network }, "Stelleth resolver starting");
+  log.info({ network: cfg.network }, "WaffleFinance resolver starting");
 
   const eth = new EthereumListener(cfg.ethereum, log);
   const stellar = new SorobanListener(cfg.soroban, cfg.pollIntervalMs, log);

@@ -1,12 +1,12 @@
-# Stelleth Soroban contracts
+# WaffleFinance Soroban contracts
 
-This workspace contains the Stellar side of the Stelleth bridge. There
+This workspace contains the Stellar side of the WaffleFinance bridge. There
 are two contracts:
 
 | Crate | Purpose |
 |---|---|
-| `stelleth-htlc` | Per-order hash + time-lock contract (mirrors the Ethereum `HTLCEscrow`). |
-| `stelleth-resolver-registry` | Open stake/slash registry for community resolvers. |
+| `wafflefinance-htlc` | Per-order hash + time-lock contract (mirrors the Ethereum `HTLCEscrow`). |
+| `wafflefinance-resolver-registry` | Open stake/slash registry for community resolvers. |
 
 The HTLC enforces that locked funds can only move when one of two
 conditions is satisfied:
@@ -80,13 +80,13 @@ stellar contract build
 stellar contract install \
     --network testnet \
     --source deployer \
-    --wasm target/wasm32-unknown-unknown/release/stelleth_htlc.wasm
+    --wasm target/wasm32-unknown-unknown/release/wafflefinance_htlc.wasm
 
 # Deploy + initialise
 HTLC_ID=$(stellar contract deploy \
     --network testnet \
     --source deployer \
-    --wasm target/wasm32-unknown-unknown/release/stelleth_htlc.wasm)
+    --wasm target/wasm32-unknown-unknown/release/wafflefinance_htlc.wasm)
 
 stellar contract invoke \
     --network testnet \
@@ -97,14 +97,14 @@ stellar contract invoke \
     --min_safety_deposit 1000000
 ```
 
-Repeat for `stelleth_resolver_registry.wasm`. Record the contract IDs
+Repeat for `wafflefinance_resolver_registry.wasm`. Record the contract IDs
 in `.env` as `SOROBAN_HTLC_TESTNET` and
 `SOROBAN_RESOLVER_REGISTRY_TESTNET`.
 
 ## TS bindings
 
 After deploy, regenerate the TypeScript bindings that the coordinator
-and frontend consume from `@stelleth/sdk`:
+and frontend consume from `@wafflefinance/sdk`:
 
 ```bash
 stellar contract bindings typescript \

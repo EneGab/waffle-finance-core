@@ -1,6 +1,6 @@
 import { createPublicClient, createWalletClient, custom, http, type Address } from "viem";
 import { mainnet, sepolia } from "viem/chains";
-import { EthereumHTLCClient } from "@stelleth/sdk";
+import { EthereumHTLCClient } from "@wafflefinance/sdk";
 import { isTestnet } from "../config/networks";
 import { resolveViteMainnetRpcUrl, resolveViteSepoliaRpcUrl } from "../config/rpc-urls";
 

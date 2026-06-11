@@ -10,7 +10,7 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {IResolverRegistry} from "./interfaces/IResolverRegistry.sol";
 
 /// @title ResolverRegistry
-/// @notice Open stake/slash registry for Stelleth resolvers. Resolvers
+/// @notice Open stake/slash registry for WaffleFinance resolvers. Resolvers
 ///         post a stake of a chosen ERC20 (typically a stablecoin or
 ///         the project's governance token) to become eligible to fill
 ///         swap orders.

@@ -1,7 +1,7 @@
 import { decodeEventLog, type Hex } from "viem";
 
 /**
- * ABI fragments for the two HTLC versions Stelleth currently supports.
+ * ABI fragments for the two HTLC versions WaffleFinance currently supports.
  *
  * v1 `MainnetHTLC.OrderCreated` keys the order by a bytes32 hash, while
  * v2 `HTLCEscrow.OrderCreated` uses a monotonic uint256 id. We try both

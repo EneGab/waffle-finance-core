@@ -1,5 +1,11 @@
-export type Chain = "ethereum" | "stellar";
-export type Direction = "eth_to_xlm" | "xlm_to_eth";
+export type Chain = "ethereum" | "stellar" | "solana";
+export type Direction =
+  | "eth_to_xlm"
+  | "xlm_to_eth"
+  | "eth_to_sol"
+  | "sol_to_eth"
+  | "xlm_to_sol"
+  | "sol_to_xlm";
 
 export type OrderStatus =
   | "announced"
@@ -51,30 +57,30 @@ export interface ResolverInfo {
 // External bridge route composability (v2.0 interface, v2.1 fillout)
 // ---------------------------------------------------------------
 //
-// Stelleth's atomic HTLC swap is one of several ways to move value
+// WaffleFinance's atomic HTLC swap is one of several ways to move value
 // between Ethereum and Stellar. CCTP v2 (USDC burn-and-mint) and
 // Axelar ITS (validator-set wrapped tokens) handle different asset
 // classes with different trust models. For some swaps, routing a leg
 // through one of those external bridges is strictly better for the
-// user (e.g. native USDC via CCTP v2 instead of an Stelleth USDC
+// user (e.g. native USDC via CCTP v2 instead of a WaffleFinance USDC
 // hop).
 //
 // We expose the route abstraction in v2.0 even though no provider is
 // wired up yet, so that v2.1 implementations can ship as additive
 // adapters without breaking SDK consumers. A frontend or coordinator
 // can iterate `getAvailableRoutes(...)` and present the user with
-// "Stelleth HTLC" vs "CCTP v2 fast path" choices, and the SDK
+// "WaffleFinance HTLC" vs "CCTP v2 fast path" choices, and the SDK
 // orchestrates whichever the user picks.
 //
-// v2.0 ships a single built-in route (`stelleth-htlc`). Adapters for
+// v2.0 ships a single built-in route (`wafflefinance-htlc`). Adapters for
 // `cctp-v2` and `axelar-its` arrive during the Q1 2027 mainnet
 // tranche (see ROADMAP.md).
 
-export type ExternalBridgeKind = "stelleth-htlc" | "cctp-v2" | "axelar-its";
+export type ExternalBridgeKind = "wafflefinance-htlc" | "cctp-v2" | "axelar-its";
 
 /**
  * A candidate route for moving value between two chains. Routes are
- * additive and may be composed: a swap can use Stelleth HTLC for the
+ * additive and may be composed: a swap can use WaffleFinance HTLC for the
  * native-asset leg and CCTP v2 for the USDC leg in the same
  * cross-chain operation.
  */
@@ -104,7 +110,7 @@ export interface ExternalBridgeRoute {
   };
 
   /**
-   * Expected settlement window in seconds. For Stelleth HTLC this is
+   * Expected settlement window in seconds. For WaffleFinance HTLC this is
    * dominated by the destination-side timelock and the user's claim
    * latency; for attestation-style bridges it is dominated by the
    * attester latency.

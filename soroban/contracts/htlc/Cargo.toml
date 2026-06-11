@@ -1,6 +1,6 @@
 [package]
-name = "stelleth-htlc"
-description = "Hash time-lock contract for the Stelleth cross-chain bridge"
+name = "wafflefinance-htlc"
+description = "Hash time-lock contract for the WaffleFinance cross-chain bridge"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -17,4 +17,4 @@ soroban-sdk = { workspace = true }
 
 [dev-dependencies]
 soroban-sdk = { workspace = true, features = ["testutils"] }
-stelleth-resolver-registry = { path = "../resolver-registry" }
+wafflefinance-resolver-registry = { path = "../resolver-registry" }

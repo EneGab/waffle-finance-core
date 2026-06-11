@@ -1,11 +1,10 @@
 import { useState, useEffect, useRef } from 'react'
 import BridgeForm from './components/BridgeForm'
 import DarkVeil from './components/DarkVeil'
-
 import TransactionHistory from './components/TransactionHistory'
-
 import { ToastContainer, useToast } from './components/Toast'
 import { useFreighter } from './hooks/useFreighter'
+import { useSolanaWallet } from './hooks/useSolanaWallet'
 import { useNetworkMode } from './lib/useNetworkMode'
 import { pingBackendWake } from './lib/wakeBackend'
 import { isMainnetEnabled } from './config/networks'
@@ -24,15 +23,6 @@ import {
   Zap,
 } from 'lucide-react'
 
-// Window objeleri için type definitions
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: any[] }) => Promise<any>;
-      selectedAddress?: string;
-    };
-  }
-}
 
 function App() {
   const [ethAddress, setEthAddress] = useState<string>('');
@@ -41,7 +31,7 @@ function App() {
   const [connectionError, setConnectionError] = useState<string>('');
   const [activeTab, setActiveTab] = useState<'bridge' | 'history'>('bridge');
   const [showIntro, setShowIntro] = useState(() => {
-    return sessionStorage.getItem('oversync:intro-seen') !== 'true';
+    return sessionStorage.getItem('wafflefinance:intro-seen') !== 'true';
   });
   const [introLogoReady, setIntroLogoReady] = useState(false);
   const [introClosing, setIntroClosing] = useState(false);
@@ -57,6 +47,16 @@ function App() {
     disconnect: disconnectFreighter,
     signTransaction: signStellarTransaction,
   } = useFreighter();
+
+  // Phantom / Solana hook
+  const {
+    isConnected: solanaConnected,
+    address: solanaAddress,
+    isLoading: solanaLoading,
+    isInstalled: phantomInstalled,
+    connect: connectPhantom,
+    disconnect: disconnectPhantom,
+  } = useSolanaWallet();
 
   // Toast hook
   const toast = useToast();
@@ -74,7 +74,7 @@ function App() {
       return;
     }
 
-    sessionStorage.setItem('oversync:intro-seen', 'true');
+    sessionStorage.setItem('wafflefinance:intro-seen', 'true');
     const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const originalIntroDuration = prefersReducedMotion ? 250 : 3500;
     const logoVisibleDelay = prefersReducedMotion ? 0 : 1000;
@@ -208,12 +208,12 @@ function App() {
   const disconnectWallets = () => {
     setEthAddress('');
     disconnectFreighter();
+    disconnectPhantom();
     setShowWalletMenu(false);
   };
 
   const isWalletsConnected = ethAddress && stellarConnected;
-  const hasAnyConnection = ethAddress || stellarConnected;
-
+  const hasAnyConnection = ethAddress || stellarConnected || solanaConnected;
   const connectionLabel = isWalletsConnected ? 'Connected' : hasAnyConnection ? 'Partial' : 'Connect Wallet';
 
   return (
@@ -221,7 +221,7 @@ function App() {
       {showIntro && (
         <div
           className={`intro-screen${introLogoReady ? ' intro-screen--ready' : ''}${introClosing ? ' intro-screen--closing' : ''}`}
-          aria-label="OverSync loading"
+          aria-label="WaffleFinance loading"
         >
           <div className="intro-card">
             <div className="intro-rail">
@@ -230,8 +230,8 @@ function App() {
               </div>
               <div className="intro-logo-wrap">
                 <img
-                  src="/images/oversync-logo.png"
-                  alt="OverSync"
+                  src="/images/wafflefinance-logo.svg"
+                  alt="WaffleFinance"
                   className="intro-logo"
                   loading="eager"
                   decoding="sync"
@@ -244,8 +244,8 @@ function App() {
               </div>
             </div>
             <div className="intro-copy">
-              <p>OverSync</p>
-              <span>Fusion Rail</span>
+              <p>WaffleFinance</p>
+              <span>Cross-Chain Swap</span>
             </div>
             <div className="intro-loader" />
           </div>
@@ -253,182 +253,221 @@ function App() {
       )}
 
       {/* Top Navigation */}
-      <nav className="sticky top-0 z-50 w-full border-b border-cyan-200/15 bg-[#050817]/78 px-4 py-3 shadow-[0_16px_60px_rgba(0,0,0,0.28)] backdrop-blur-2xl md:px-8">
+      <nav className="nav-glass sticky top-0 z-50 w-full px-4 py-3 md:px-8">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <img 
-            src="/images/oversync-logo.png" 
-            alt="OverSync" 
-            className="h-11 w-11 rounded-xl border border-cyan-200/20 shadow-[0_0_30px_rgba(0,226,255,0.2)]"
-          />
-          <div>
-            <span className="block text-lg font-semibold tracking-tight text-white">OverSync</span>
-            <span className="hidden text-xs uppercase tracking-[0.32em] text-indigo-200/75 sm:block">Fusion Rail</span>
-          </div>
-        </div>
-        
-        <div className="flex items-center gap-2 md:gap-3">
-          <nav className="hidden items-center gap-2 md:flex">
-            <a href="https://www.alchemy.com/faucets/ethereum-sepolia" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-2 rounded-full border border-cyan-200/15 bg-white/[0.055] px-3 py-2 text-sm text-slate-200 transition hover:border-cyan-200/35 hover:bg-cyan-200/10 hover:text-white">
-              Faucet
-              <ExternalLink className="h-3.5 w-3.5" />
-            </a>
-          </nav>
-
-          {/* Network selector — testnet-only until v2 mainnet launch */}
-          {isMainnetEnabled() ? (
-            <button
-              onClick={toggleNetwork}
-              className={`network-pill px-3 py-2 text-sm font-semibold transition-all duration-200 md:px-4 ${
-                currentNetwork === 'mainnet'
-                  ? 'network-mainnet'
-                  : 'network-testnet'
-              }`}
-            >
-              <div className={`w-2 h-2 rounded-full ${
-                currentNetwork === 'mainnet' ? 'bg-cyan-300 shadow-[0_0_16px_rgba(0,226,255,0.65)]' : 'bg-indigo-300 shadow-[0_0_16px_rgba(124,140,255,0.48)]'
-              }`}></div>
-              {currentNetwork === 'mainnet' ? 'Mainnet' : 'Testnet'}
-            </button>
-          ) : (
-            <div className="network-pill-group inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.04] p-1">
-              <span
-                className="network-pill network-testnet px-3 py-1.5 text-sm font-semibold md:px-4"
-                aria-current="true"
-              >
-                <div className="w-2 h-2 rounded-full bg-indigo-300 shadow-[0_0_16px_rgba(124,140,255,0.48)]"></div>
-                Testnet
-              </span>
-              <button
-                type="button"
-                disabled
-                title="v2 mainnet launches after independent audit (Q1 2027)"
-                className="network-pill network-coming cursor-not-allowed px-3 py-1.5 text-sm font-semibold md:px-4"
-              >
-                Mainnet Coming
-              </button>
+          <div className="flex items-center gap-3">
+            <div className="relative">
+              <img
+                src="/images/wafflefinance-logo.svg"
+                alt="WaffleFinance"
+                className="h-10 w-10 rounded-xl border border-amber-400/20 nav-logo-waffle"
+              />
+              <div className="absolute -inset-1 rounded-xl bg-gradient-to-br from-amber-400/15 to-transparent blur-sm -z-10" />
             </div>
-          )}
-          
-          {/* Connect Wallet Button */}
-          <div className="relative">
-            <button 
-              onClick={() => setShowWalletMenu(!showWalletMenu)}
-              className="inline-flex items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-200/[0.12] px-3 py-2 text-sm font-semibold text-white shadow-[0_12px_42px_rgba(0,226,255,0.18)] transition hover:border-cyan-100/50 hover:bg-cyan-200/[0.18] md:px-5"
-            >
-              <Wallet className="h-4 w-4" />
-              {isWalletsConnected ? (
-                <>
-                  <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                  <span className="hidden sm:inline">{connectionLabel}</span>
-                </>
-              ) : hasAnyConnection ? (
-                <>
-                  <div className="w-2 h-2 bg-yellow-400 rounded-full"></div>
-                  <span className="hidden sm:inline">{connectionLabel}</span>
-                </>
-              ) : (
-                <span className="hidden sm:inline">{connectionLabel}</span>
-              )}
-              <ChevronDown className={`h-4 w-4 transition-transform duration-200 ${showWalletMenu ? 'rotate-180' : ''}`} />
-            </button>
+            <div>
+              <span className="block text-[1.05rem] font-bold tracking-tight text-white">WaffleFinance</span>
+              <span className="hidden text-[0.62rem] uppercase tracking-[0.36em] text-amber-400/60 sm:block">Cross-Chain Swap</span>
+            </div>
+          </div>
 
-            {/* Wallet Dropdown Menu */}
-            {showWalletMenu && (
-              <div className="absolute right-0 top-full z-[100] mt-3 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-cyan-200/20 bg-[#070b1c]/95 p-4 shadow-2xl shadow-black/55 backdrop-blur-2xl">
-                <h3 className="mb-4 text-center font-semibold text-white">Connect Wallets</h3>
-                
-                {(connectionError || stellarError) && (
-                  <div className="mb-4 rounded-xl border border-red-400/35 bg-red-500/16 p-3">
-                    <p className="text-red-300 text-sm">{connectionError || stellarError}</p>
-                  </div>
-                )}
+          <div className="flex items-center gap-2 md:gap-2.5">
+            <nav className="hidden items-center gap-2 md:flex">
+              <a
+                href="https://www.alchemy.com/faucets/ethereum-sepolia"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.05] px-3 py-1.5 text-xs font-medium text-slate-300 transition hover:border-[#4f6bff]/40 hover:bg-[#4f6bff]/10 hover:text-white"
+              >
+                Faucet
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            </nav>
 
-                {/* MetaMask */}
-                <div className="mb-3 rounded-2xl border border-orange-200/18 bg-white/[0.055] p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-orange-300/20 bg-orange-400/15 text-orange-200">
-                        <Wallet className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <div className="text-white font-medium">MetaMask</div>
-                        <div className="text-xs text-slate-400">Ethereum Network</div>
-                      </div>
-                    </div>
-                    
-                    {ethAddress ? (
-                      <div className="text-right">
-                        <div className="flex items-center gap-1 mb-1">
-                          <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                          <span className="text-xs text-green-400">Connected</span>
-                        </div>
-                        <p className="text-xs text-gray-300">
-                          {ethAddress.substring(0, 6)}...{ethAddress.substring(ethAddress.length - 4)}
-                        </p>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={connectMetaMask}
-                        className="rounded-full border border-orange-300/20 bg-orange-400/15 px-4 py-2 text-sm text-orange-200 transition hover:bg-orange-400/25"
-                        disabled={isConnecting}
-                      >
-                        {isConnecting ? 'Connecting...' : 'Connect'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Freighter */}
-                <div className="mb-3 rounded-2xl border border-cyan-200/[0.18] bg-white/[0.055] p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-xl border border-cyan-200/25 bg-cyan-200/[0.14] text-cyan-50">
-                        <RadioTower className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <div className="text-white font-medium">Freighter</div>
-                        <div className="text-xs text-slate-400">Stellar Network</div>
-                      </div>
-                    </div>
-                    
-                    {stellarConnected && stellarAddress ? (
-                      <div className="text-right">
-                        <div className="flex items-center gap-1 mb-1">
-                          <div className="w-2 h-2 bg-green-400 rounded-full"></div>
-                          <span className="text-xs text-green-400">Connected</span>
-                        </div>
-                        <p className="text-xs text-gray-300">
-                          {stellarAddress.substring(0, 6)}...{stellarAddress.substring(stellarAddress.length - 4)}
-                        </p>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleFreighterConnect}
-                        className="rounded-full border border-cyan-200/25 bg-cyan-200/[0.14] px-4 py-2 text-sm text-cyan-50 transition hover:bg-cyan-200/25"
-                        disabled={stellarLoading}
-                      >
-                        {stellarLoading ? 'Connecting...' : 'Connect'}
-                      </button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Disconnect Button */}
-                {hasAnyConnection && (
-                  <button
-                    onClick={disconnectWallets}
-                    className="w-full rounded-full border border-red-400/30 bg-red-500/15 py-2 text-sm text-red-200 transition hover:bg-red-500/25"
-                  >
-                    Disconnect All
-                  </button>
-                )}
+            {isMainnetEnabled() ? (
+              <button
+                onClick={toggleNetwork}
+                className={`network-pill px-3 py-1.5 text-xs font-semibold transition-all duration-200 md:px-3.5 ${
+                  currentNetwork === 'mainnet' ? 'network-mainnet' : 'network-testnet'
+                }`}
+              >
+                <div className={`h-1.5 w-1.5 rounded-full ${
+                  currentNetwork === 'mainnet'
+                    ? 'bg-cyan-400 shadow-[0_0_8px_rgba(0,212,255,0.7)]'
+                    : 'bg-[#7b8fff] shadow-[0_0_8px_rgba(79,107,255,0.6)]'
+                }`} />
+                {currentNetwork === 'mainnet' ? 'Mainnet' : 'Testnet'}
+              </button>
+            ) : (
+              <div className="network-pill-group inline-flex items-center gap-1 rounded-full border border-white/[0.08] bg-white/[0.03] p-1">
+                <span className="network-pill network-testnet px-3 py-1 text-xs font-semibold md:px-3.5" aria-current="true">
+                  <div className="h-1.5 w-1.5 rounded-full bg-[#7b8fff] shadow-[0_0_8px_rgba(79,107,255,0.6)]" />
+                  Testnet
+                </span>
+                <button
+                  type="button"
+                  disabled
+                  title="v2 mainnet launches after independent audit (Q1 2027)"
+                  className="network-pill network-coming cursor-not-allowed px-3 py-1 text-xs font-semibold md:px-3.5"
+                >
+                  Mainnet Soon
+                </button>
               </div>
             )}
+
+            {/* Connect Wallet Button */}
+            <div className="relative">
+              <button
+                onClick={() => setShowWalletMenu(!showWalletMenu)}
+                className="inline-flex items-center gap-2 rounded-full border border-[#4f6bff]/35 bg-[#4f6bff]/[0.14] px-3 py-1.5 text-sm font-semibold text-white shadow-[0_4px_20px_rgba(63,92,255,0.18)] transition hover:border-[#4f6bff]/55 hover:bg-[#4f6bff]/[0.22] md:px-4"
+              >
+                <Wallet className="h-3.5 w-3.5" />
+                {isWalletsConnected ? (
+                  <>
+                    <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.7)]" />
+                    <span className="hidden sm:inline">{connectionLabel}</span>
+                  </>
+                ) : hasAnyConnection ? (
+                  <>
+                    <div className="h-1.5 w-1.5 rounded-full bg-amber-400 shadow-[0_0_6px_rgba(251,191,36,0.7)]" />
+                    <span className="hidden sm:inline">{connectionLabel}</span>
+                  </>
+                ) : (
+                  <span className="hidden sm:inline">{connectionLabel}</span>
+                )}
+                <ChevronDown className={`h-3.5 w-3.5 transition-transform duration-200 ${showWalletMenu ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* Wallet Dropdown */}
+              {showWalletMenu && (
+                <div className="absolute right-0 top-full z-[100] mt-2.5 w-[min(21rem,calc(100vw-2rem))] rounded-2xl border border-[#4f6bff]/22 bg-[#06091a]/96 p-4 shadow-2xl shadow-black/60 backdrop-blur-2xl">
+                  <p className="mb-3.5 text-center text-sm font-semibold text-white/90">Connect Wallets</p>
+
+                  {(connectionError || stellarError) && (
+                    <div className="mb-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3">
+                      <p className="text-xs text-red-300">{connectionError || stellarError}</p>
+                    </div>
+                  )}
+
+                  {/* MetaMask */}
+                  <div className="mb-2.5 rounded-xl border border-orange-400/15 bg-white/[0.04] p-3.5 transition hover:border-orange-400/25">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-orange-400/20 bg-orange-400/12 text-orange-300">
+                          <Wallet className="h-3.5 w-3.5" />
+                        </span>
+                        <div>
+                          <div className="text-sm font-semibold text-white">MetaMask</div>
+                          <div className="text-[0.7rem] text-slate-400">Ethereum</div>
+                        </div>
+                      </div>
+                      {ethAddress ? (
+                        <div className="text-right">
+                          <div className="flex items-center gap-1 mb-0.5">
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            <span className="text-[0.7rem] text-emerald-400">Connected</span>
+                          </div>
+                          <p className="text-[0.7rem] text-slate-400">{ethAddress.substring(0, 6)}…{ethAddress.substring(ethAddress.length - 4)}</p>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={connectMetaMask}
+                          disabled={isConnecting}
+                          className="rounded-full border border-orange-400/22 bg-orange-400/12 px-3.5 py-1.5 text-xs font-semibold text-orange-200 transition hover:bg-orange-400/22"
+                        >
+                          {isConnecting ? 'Connecting…' : 'Connect'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Freighter */}
+                  <div className="mb-2.5 rounded-xl border border-[#4f6bff]/18 bg-white/[0.04] p-3.5 transition hover:border-[#4f6bff]/32">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-[#4f6bff]/25 bg-[#4f6bff]/12 text-[#a8b4ff]">
+                          <RadioTower className="h-3.5 w-3.5" />
+                        </span>
+                        <div>
+                          <div className="text-sm font-semibold text-white">Freighter</div>
+                          <div className="text-[0.7rem] text-slate-400">Stellar</div>
+                        </div>
+                      </div>
+                      {stellarConnected && stellarAddress ? (
+                        <div className="text-right">
+                          <div className="flex items-center gap-1 mb-0.5">
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            <span className="text-[0.7rem] text-emerald-400">Connected</span>
+                          </div>
+                          <p className="text-[0.7rem] text-slate-400">{stellarAddress.substring(0, 6)}…{stellarAddress.substring(stellarAddress.length - 4)}</p>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleFreighterConnect}
+                          disabled={stellarLoading}
+                          className="rounded-full border border-[#4f6bff]/28 bg-[#4f6bff]/12 px-3.5 py-1.5 text-xs font-semibold text-[#a8b4ff] transition hover:bg-[#4f6bff]/22"
+                        >
+                          {stellarLoading ? 'Connecting…' : 'Connect'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Phantom — Solana */}
+                  <div className="mb-2.5 rounded-xl border border-purple-500/18 bg-white/[0.04] p-3.5 transition hover:border-purple-500/32">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-lg border border-purple-500/25 bg-purple-500/12 text-purple-300">
+                          <svg className="h-3.5 w-3.5" viewBox="0 0 128 128" fill="none">
+                            <circle cx="64" cy="64" r="64" fill="url(#phantomGrad)" />
+                            <path d="M110.5 64c0-25.6-20.9-46.5-46.5-46.5S17.5 38.4 17.5 64c0 16.4 8.5 30.8 21.3 39.1 2.1 1.4 4.9-.2 4.9-2.7v-7.2c0-1.4.8-2.7 2-3.4C57.4 85.5 64 75.6 64 64.3c0-11.3-7.3-21-17.6-24.4-1.6-.5-2.7-2-2.7-3.7v-1c0-2.5 2.4-4.3 4.8-3.5C65.3 36.5 76 51 76 67.8c0 16.2-10.9 29.9-25.9 33.9" stroke="white" strokeWidth="5" strokeLinecap="round"/>
+                            <defs>
+                              <linearGradient id="phantomGrad" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
+                                <stop stopColor="#9945FF"/>
+                                <stop offset="1" stopColor="#14F195"/>
+                              </linearGradient>
+                            </defs>
+                          </svg>
+                        </span>
+                        <div>
+                          <div className="text-sm font-semibold text-white">Phantom</div>
+                          <div className="text-[0.7rem] text-slate-400">Solana</div>
+                        </div>
+                      </div>
+                      {solanaConnected && solanaAddress ? (
+                        <div className="text-right">
+                          <div className="flex items-center gap-1 mb-0.5">
+                            <div className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                            <span className="text-[0.7rem] text-emerald-400">Connected</span>
+                          </div>
+                          <p className="text-[0.7rem] text-slate-400">{solanaAddress.substring(0, 6)}…{solanaAddress.substring(solanaAddress.length - 4)}</p>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => connectPhantom()}
+                          disabled={solanaLoading}
+                          className="rounded-full border border-purple-500/28 bg-purple-500/12 px-3.5 py-1.5 text-xs font-semibold text-purple-200 transition hover:bg-purple-500/22"
+                        >
+                          {solanaLoading ? 'Connecting…' : phantomInstalled ? 'Connect' : 'Install'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {hasAnyConnection && (
+                    <button
+                      onClick={disconnectWallets}
+                      className="w-full rounded-xl border border-red-500/22 bg-red-500/10 py-2 text-xs font-semibold text-red-300 transition hover:bg-red-500/18"
+                    >
+                      Disconnect All
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
         </div>
       </nav>
 
@@ -436,74 +475,77 @@ function App() {
       <MainnetVersionBanner networkState={networkState} />
 
       {/* Main Content */}
-      <main className="relative z-10 mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 gap-8 px-4 pb-24 pt-10 md:px-8 lg:grid-cols-[minmax(0,0.9fr)_minmax(420px,560px)] lg:items-start lg:pt-16">
-        <section className="space-y-8">
-          <div className="max-w-2xl">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-200/30 bg-cyan-200/[0.12] px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.22em] text-cyan-50/90 shadow-[0_12px_34px_rgba(0,226,255,0.1)]">
-              <RadioTower className="h-3.5 w-3.5" />
-              Live cross-chain rail
+      <main className="relative z-10 mx-auto grid w-full max-w-7xl flex-1 grid-cols-1 gap-10 px-4 pb-24 pt-10 md:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(420px,540px)] lg:items-start lg:pt-16">
+
+        {/* Left — Hero + info */}
+        <section className="space-y-7">
+          <div className="max-w-xl">
+            <div className="waffle-badge mb-5 inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.25em] shadow-[0_4px_20px_rgba(245,158,11,0.1)]">
+              <span>🧇</span>
+              Multi-Chain · ETH · XLM · SOL
             </div>
-            <h1 className="text-4xl font-semibold leading-[1.05] tracking-tight text-white md:text-6xl">
-              Ethereum and Stellar,
-              <span className="hero-gradient block">synced with intent.</span>
+            <h1 className="text-[2.6rem] font-bold leading-[1.06] tracking-tight text-white md:text-[3.4rem]">
+              Swap across chains,
+              <span className="hero-gradient-waffle block mt-0.5">crispy fast.</span>
             </h1>
-            <p className="mt-5 max-w-xl text-base leading-7 text-slate-200/90 md:text-lg">
-              Execute ETH and XLM swaps from a focused, production-grade control surface with live quotes, wallet state, and settlement history in one place.
+            <p className="mt-4 max-w-md text-[0.95rem] leading-relaxed text-slate-300/75">
+              WaffleFinance brings atomic cross-chain swaps between Ethereum, Stellar, and Solana — live quotes, non-custodial HTLC settlement, zero counterparty risk.
             </p>
           </div>
 
-          <div className="grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3">
+          {/* Stats */}
+          <div className="grid max-w-xl grid-cols-3 gap-3">
             {[
-              { icon: ShieldCheck, label: 'HTLC secured', value: 'Atomic path' },
-              { icon: Activity, label: 'Quote source', value: 'Relayer live' },
-              { icon: LockKeyhole, label: 'Mode', value: currentNetwork === 'mainnet' ? 'Mainnet' : 'Testnet' },
+              { icon: ShieldCheck, label: 'Settlement', value: 'Atomic HTLC' },
+              { icon: Activity,    label: 'Chains',     value: 'ETH · XLM · SOL' },
+              { icon: LockKeyhole, label: 'Network',    value: currentNetwork === 'mainnet' ? 'Mainnet' : 'Testnet' },
             ].map(({ icon: Icon, label, value }) => (
-              <div key={label} className="metric-tile">
-                <Icon className="h-4 w-4 text-cyan-100" />
-                <span className="text-xs text-slate-300/80">{label}</span>
-                <strong className="text-sm font-semibold text-white">{value}</strong>
+              <div key={label} className="metric-tile metric-tile-waffle">
+                <Icon className="h-3.5 w-3.5 text-amber-400/80" />
+                <span className="text-[0.68rem] text-slate-400/80 uppercase tracking-wide">{label}</span>
+                <strong className="text-[0.82rem] font-semibold text-white">{value}</strong>
               </div>
             ))}
           </div>
 
-          <div className="route-panel max-w-2xl">
-            <div className="flex items-center justify-between gap-4 border-b border-white/10 pb-4">
+          {/* Route card */}
+          <div className="route-panel route-panel-waffle max-w-xl">
+            <div className="flex items-center justify-between gap-4 border-b border-white/[0.07] pb-4">
               <div>
-                <p className="text-xs uppercase tracking-[0.24em] text-cyan-100/55">Active route</p>
-                <h2 className="mt-1 text-lg font-semibold text-white">ETH / XLM liquidity lane</h2>
+                <p className="text-[0.65rem] uppercase tracking-[0.28em] text-amber-400/50">Active routes</p>
+                <h2 className="mt-0.5 text-base font-semibold text-white">ETH · XLM · SOL Liquidity</h2>
               </div>
-              <Zap className="h-5 w-5 text-indigo-200 drop-shadow-[0_0_12px_rgba(124,140,255,0.34)]" />
+              <Zap className="h-4 w-4 text-amber-400 drop-shadow-[0_0_10px_rgba(245,158,11,0.5)]" />
             </div>
-            <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 pt-4">
+            <div className="grid grid-cols-[1fr_auto_1fr_auto_1fr] items-center gap-2 pt-4">
               <div className="chain-node">
-                <img src="/images/eth.png" alt="ETH" className="h-7 w-7" />
-                <span>Ethereum</span>
+                <img src="/images/eth.png" alt="ETH" className="h-5 w-5" />
+                <span>ETH</span>
               </div>
-              <ArrowRightLeft className="h-5 w-5 text-slate-400" />
+              <ArrowRightLeft className="h-3.5 w-3.5 text-slate-500" />
               <div className="chain-node">
-                <img src="/images/xlm.png" alt="XLM" className="h-7 w-7" />
-                <span>Stellar</span>
+                <img src="/images/xlm.png" alt="XLM" className="h-5 w-5" />
+                <span>XLM</span>
+              </div>
+              <ArrowRightLeft className="h-3.5 w-3.5 text-slate-500" />
+              <div className="chain-node">
+                <img src="/images/sol.svg" alt="SOL" className="h-5 w-5" />
+                <span>SOL</span>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="w-full lg:w-[640px] lg:max-w-none lg:justify-self-start">
-          {/* Tab Navigation */}
+        {/* Right — Bridge / History card */}
+        <section className="w-full">
           <div className="mb-4 flex justify-center lg:justify-end">
             <div className="segmented-control">
-              <button
-                onClick={() => setActiveTab('bridge')}
-                className={activeTab === 'bridge' ? 'active' : ''}
-              >
-                <ArrowRightLeft className="h-4 w-4" />
+              <button onClick={() => setActiveTab('bridge')} className={activeTab === 'bridge' ? 'active' : ''}>
+                <ArrowRightLeft className="h-3.5 w-3.5" />
                 Bridge
               </button>
-              <button
-                onClick={() => setActiveTab('history')}
-                className={activeTab === 'history' ? 'active' : ''}
-              >
-                <History className="h-4 w-4" />
+              <button onClick={() => setActiveTab('history')} className={activeTab === 'history' ? 'active' : ''}>
+                <History className="h-3.5 w-3.5" />
                 History
               </button>
             </div>
@@ -513,12 +555,12 @@ function App() {
             <BridgeForm
               ethAddress={ethAddress}
               stellarAddress={stellarAddress || ''}
+              solanaAddress={solanaAddress || undefined}
               signStellarTransaction={(xdr, networkPassphrase) =>
                 signStellarTransaction(xdr, networkPassphrase, stellarAddress || undefined)
               }
             />
           )}
-
           {activeTab === 'history' && (
             <TransactionHistory
               ethAddress={ethAddress}
@@ -543,16 +585,27 @@ function App() {
         </div>
       </div>
 
+      {/* Waffle backdrop — blended large waffle pattern behind everything */}
+      <div className="waffle-backdrop-wrap">
+        <img
+          src="/images/waffle-backdrop.svg"
+          alt=""
+          className="waffle-backdrop"
+          aria-hidden="true"
+        />
+      </div>
+
       {/* Footer Bar */}
-      <div className="fixed inset-x-0 bottom-0 z-40 flex h-9 w-full items-center justify-end border-t border-cyan-200/15 bg-[#03040a]/86 px-6 backdrop-blur-xl">
-        <a 
-          href="https://x.com/kaptan_web3" 
-          target="_blank" 
+      <div className="fixed inset-x-0 bottom-0 z-40 flex h-8 w-full items-center justify-between border-t border-white/[0.06] bg-[#04050f]/88 px-5 backdrop-blur-xl">
+        <span className="text-[0.68rem] text-slate-500/60 tracking-wide">WaffleFinance · Cross-Chain Swap</span>
+        <a
+          href="https://x.com/kaptan_web3"
+          target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 text-sm font-semibold text-slate-300 transition-colors hover:text-cyan-200"
+          className="flex items-center gap-1.5 text-[0.68rem] font-semibold text-slate-400/70 transition-colors hover:text-[#7b8fff]"
         >
-          Created by Kaptan
-          <span className="text-base">X</span>
+          Built by Kaptan
+          <ExternalLink className="h-2.5 w-2.5" />
         </a>
       </div>
 
@@ -567,3 +620,4 @@ function App() {
 }
 
 export default App;
+

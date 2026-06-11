@@ -8,11 +8,12 @@ import { SecretService } from "./services/secret-service.js";
 import { createApp } from "./server/app.js";
 import { EthereumListener } from "./listeners/ethereum-listener.js";
 import { SorobanListener } from "./listeners/soroban-listener.js";
+import { SolanaListener } from "./listeners/solana-listener.js";
 
 async function main(): Promise<void> {
   const cfg = loadConfig();
   const log = getLogger(cfg.logLevel);
-  log.info({ network: cfg.network, port: cfg.port }, "Stelleth coordinator starting");
+  log.info({ network: cfg.network, port: cfg.port }, "WaffleFinance coordinator starting");
 
   const db = await openDatabase(cfg.databaseUrl);
   const repo = new OrdersRepository(db);
@@ -34,18 +35,18 @@ async function main(): Promise<void> {
 
   const ethListener = new EthereumListener(cfg, orders, log);
   const sorobanListener = new SorobanListener(cfg, orders, log);
+  const solanaListener = new SolanaListener(cfg, orders, log);
   ethListener.start();
   sorobanListener.start();
+  solanaListener.start();
 
   const shutdown = async (signal: string) => {
     log.info({ signal }, "shutting down");
     ethListener.stop();
     sorobanListener.stop();
+    solanaListener.stop();
     server.close(() => {
-      // Close database if it has a close method (SQLite)
-      if ('close' in db) {
-        (db as any).close();
-      }
+      if ('close' in db) (db as any).close();
       process.exit(0);
     });
   };
@@ -54,7 +55,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error("Fatal coordinator startup error:", err);
   process.exit(1);
 });

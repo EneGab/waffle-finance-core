@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploys the OverSync Soroban contracts to the chosen network.
+# Deploys the WaffleFinance Soroban contracts to the chosen network.
 #
 # Usage:
 #   ./scripts/deploy.sh [testnet|mainnet] [deployer_identity]
@@ -28,8 +28,8 @@ SOROBAN_DIR=$(dirname "$SCRIPT_DIR")
 cd "$SOROBAN_DIR"
 
 echo "== Building wasm artefacts =="
-stellar contract build --package oversync-htlc
-stellar contract build --package oversync-resolver-registry
+stellar contract build --package wafflefinance-htlc
+stellar contract build --package wafflefinance-resolver-registry
 
 # Locate the wasm files. stellar-cli writes to wasm32v1-none/release with the
 # crate name with underscores.
@@ -38,8 +38,8 @@ if [[ -z "$TARGET_DIR" ]]; then
     # Fallback: use the default cargo target dir for the current host.
     TARGET_DIR="target/wasm32v1-none/release"
 fi
-HTLC_WASM="$TARGET_DIR/oversync_htlc.wasm"
-REG_WASM="$TARGET_DIR/oversync_resolver_registry.wasm"
+HTLC_WASM="$TARGET_DIR/wafflefinance_htlc.wasm"
+REG_WASM="$TARGET_DIR/wafflefinance_resolver_registry.wasm"
 
 if [[ ! -f "$HTLC_WASM" || ! -f "$REG_WASM" ]]; then
     echo "ERROR: wasm artefacts not found in $TARGET_DIR" >&2
@@ -110,3 +110,4 @@ cat > "$OUT_FILE" <<JSON
 JSON
 
 echo "Deployment summary written to $OUT_FILE"
+

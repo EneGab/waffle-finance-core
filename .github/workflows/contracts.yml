@@ -63,7 +63,7 @@ jobs:
         run: pnpm install --frozen-lockfile=false
 
       - name: Compile contracts
-        run: pnpm --filter @stelleth/contracts compile
+        run: pnpm --filter @wafflefinance/contracts compile
 
       - name: Setup Python
         uses: actions/setup-python@v5

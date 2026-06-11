@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Horizon, 
   Asset, 
@@ -11,44 +11,37 @@ import { parseHtlcReceipt } from '../lib/parseHtlcReceipt';
 import { sanitizeAmountInput } from '../lib/sanitizeAmountInput';
 import { ArrowDownUp, CheckCircle2, Loader2, RefreshCw, Settings2 } from 'lucide-react';
 
-// Web3 imports for contract interaction
-declare global {
-  interface Window {
-    ethereum?: {
-      request: (args: { method: string; params?: any[] }) => Promise<any>;
-      selectedAddress?: string;
-    };
-  }
-}
-
 interface BridgeFormProps {
   ethAddress: string;
   stellarAddress: string;
+  solanaAddress?: string;
   signStellarTransaction: (xdr: string, networkPassphrase?: string) => Promise<string>;
 }
 
-  // Fixed token information
-const ETH_TOKEN = {
-  symbol: 'ETH',
-  name: 'Ethereum',
-  logo: '/images/eth.png',
-  chain: 'Ethereum',
-  decimals: 18
+const ETH_TOKEN = { symbol: 'ETH', name: 'Ethereum',      logo: '/images/eth.png', chain: 'Ethereum', decimals: 18 };
+const XLM_TOKEN = { symbol: 'XLM', name: 'Stellar Lumens', logo: '/images/xlm.png', chain: 'Stellar',  decimals: 7  };
+const SOL_TOKEN = { symbol: 'SOL', name: 'Solana',         logo: '/images/sol.svg', chain: 'Solana',   decimals: 9  };
+
+type BridgeDirection = 'eth_to_xlm' | 'xlm_to_eth' | 'eth_to_sol' | 'sol_to_eth' | 'xlm_to_sol' | 'sol_to_xlm';
+
+const DIRECTION_MAP: Record<BridgeDirection, { from: typeof ETH_TOKEN; to: typeof ETH_TOKEN }> = {
+  eth_to_xlm: { from: ETH_TOKEN, to: XLM_TOKEN },
+  xlm_to_eth: { from: XLM_TOKEN, to: ETH_TOKEN },
+  eth_to_sol:  { from: ETH_TOKEN, to: SOL_TOKEN  },
+  sol_to_eth:  { from: SOL_TOKEN,  to: ETH_TOKEN },
+  xlm_to_sol:  { from: XLM_TOKEN, to: SOL_TOKEN  },
+  sol_to_xlm:  { from: SOL_TOKEN,  to: XLM_TOKEN },
 };
 
-const XLM_TOKEN = {
-  symbol: 'XLM',
-  name: 'Stellar Lumens',
-  logo: '/images/xlm.png',
-  chain: 'Stellar',
-  decimals: 7
+const SOLANA_ROUTE_LABELS: Record<string, string> = {
+  eth_to_sol: 'ETH → SOL',
+  sol_to_eth: 'SOL → ETH',
+  xlm_to_sol: 'XLM → SOL',
+  sol_to_xlm: 'SOL → XLM',
 };
 
-  // Fixed exchange rate (in real application, this would be fetched from API)
-const ETH_TO_XLM_RATE = 10000; // 1 ETH = 10,000 XLM
-
-// Network configuration
-const MAINNET_CHAIN_ID = '0x1'; // Ethereum Mainnet (1)
+const ETH_TO_XLM_RATE = 10000;
+const MAINNET_CHAIN_ID = '0x1';
 
 // Helper function to save transaction to localStorage for history
 const saveTransactionToHistory = (transaction: {
@@ -103,7 +96,7 @@ const saveTransactionToHistory = (transaction: {
     };
 
     // Get existing transactions
-    const existing = localStorage.getItem('oversync_transactions_v2');
+    const existing = localStorage.getItem('wafflefinance_transactions_v2');
     const transactions = existing ? JSON.parse(existing) : [];
     
     // Add new transaction
@@ -115,7 +108,7 @@ const saveTransactionToHistory = (transaction: {
     }
     
     // Save back to localStorage
-    localStorage.setItem('oversync_transactions_v2', JSON.stringify(transactions));
+    localStorage.setItem('wafflefinance_transactions_v2', JSON.stringify(transactions));
     
     console.log('💾 Transaction saved to history:', historyTransaction);
   } catch (error) {
@@ -126,7 +119,7 @@ const saveTransactionToHistory = (transaction: {
 // Helper function to update transaction status in localStorage
 const updateTransactionStatus = (orderId: string, status: 'pending' | 'completed' | 'failed' | 'cancelled', additionalData?: any) => {
   try {
-    const existing = localStorage.getItem('oversync_transactions_v2');
+    const existing = localStorage.getItem('wafflefinance_transactions_v2');
     if (existing) {
       const transactions = JSON.parse(existing);
       const transactionIndex = transactions.findIndex((tx: any) => tx.id === orderId);
@@ -140,7 +133,7 @@ const updateTransactionStatus = (orderId: string, status: 'pending' | 'completed
         }
         
         // Save back to localStorage
-        localStorage.setItem('oversync_transactions_v2', JSON.stringify(transactions));
+        localStorage.setItem('wafflefinance_transactions_v2', JSON.stringify(transactions));
         
         console.log(`💾 Transaction status updated: ${orderId} -> ${status}`);
       } else {
@@ -159,8 +152,8 @@ const API_BASE_URL = import.meta.env.PROD
   : import.meta.env.VITE_API_BASE_URL || PRODUCTION_API_BASE_URL;
 const ENABLE_MOCK_DATA = import.meta.env.VITE_ENABLE_MOCK_DATA === 'true';
 
-export default function BridgeForm({ ethAddress, stellarAddress, signStellarTransaction }: BridgeFormProps) {
-  const [direction, setDirection] = useState<'eth_to_xlm' | 'xlm_to_eth'>('eth_to_xlm');
+export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, signStellarTransaction }: BridgeFormProps): React.JSX.Element {
+  const [direction, setDirection] = useState<BridgeDirection>('eth_to_xlm');
   const [networkInfo, setNetworkInfo] = useState(() => {
     const currentNetwork = getCurrentNetwork();
     const isTestnetMode = isTestnet();
@@ -231,79 +224,61 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
   const [isLoadingRate, setIsLoadingRate] = useState(false);
   const [rateLastUpdated, setRateLastUpdated] = useState<Date | null>(null);
   
-  // From ve To tokenları
-  const fromToken = direction === 'eth_to_xlm' ? ETH_TOKEN : XLM_TOKEN;
-  const toToken = direction === 'eth_to_xlm' ? XLM_TOKEN : ETH_TOKEN;
+  // Derive from/to tokens from direction map
+  const fromToken = DIRECTION_MAP[direction].from;
+  const toToken   = DIRECTION_MAP[direction].to;
 
   // Fetch balance when direction or addresses change
   useEffect(() => {
     let cancelled = false;
 
     const fetchEthBalance = async (addr: string): Promise<string> => {
-      if (!window.ethereum) {
-        throw new Error('MetaMask not available');
-      }
-      const ethBalance = await window.ethereum.request({
-        method: 'eth_getBalance',
-        params: [addr, 'latest']
-      });
-      const balanceInEth = (parseInt(ethBalance, 16) / Math.pow(10, 18)).toFixed(4);
-      return balanceInEth;
+      if (!window.ethereum) throw new Error('MetaMask not available');
+      const raw = await window.ethereum.request({ method: 'eth_getBalance', params: [addr, 'latest'] });
+      return (parseInt(raw, 16) / 1e18).toFixed(4);
     };
 
     const fetchXlmBalance = async (addr: string): Promise<string> => {
-      const horizonUrl = networkInfo.stellar.horizonUrl;
-      const response = await fetch(`${horizonUrl}/accounts/${addr}`);
-      if (!response.ok) {
-        // Account may not exist yet (404), return 0
-        if (response.status === 404) {
-          return '0.0000';
-        }
-        throw new Error(`Stellar API error: ${response.status}`);
-      }
-      const accountData = await response.json();
-      const xlmBalance = accountData.balances.find((b: any) => b.asset_type === 'native')?.balance || '0';
-      return parseFloat(xlmBalance).toFixed(4);
+      const response = await fetch(`${networkInfo.stellar.horizonUrl}/accounts/${addr}`);
+      if (!response.ok) return '0.0000';
+      const data = await response.json();
+      const bal = data.balances?.find((b: any) => b.asset_type === 'native')?.balance || '0';
+      return parseFloat(bal).toFixed(4);
+    };
+
+    const fetchSolBalance = async (addr: string): Promise<string> => {
+      const rpcUrl = networkInfo.isTestnet
+        ? 'https://api.devnet.solana.com'
+        : 'https://api.mainnet-beta.solana.com';
+      const res = await fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getBalance', params: [addr] }),
+      });
+      const json = await res.json();
+      return (json.result?.value / 1e9 || 0).toFixed(4);
     };
 
     const loadBalance = async () => {
-      console.log('🔄 Loading balance for direction:', direction);
-
-      if (direction === 'eth_to_xlm' && ethAddress) {
+      const src = DIRECTION_MAP[direction].from;
+      if (src.symbol === 'ETH' && ethAddress) {
         setBalance('Loading...');
-        try {
-          const bal = await fetchEthBalance(ethAddress);
-          if (!cancelled) {
-            console.log('✅ ETH balance loaded:', bal);
-            setBalance(bal);
-          }
-        } catch (err: any) {
-          console.error('❌ ETH balance fetch failed:', err);
-          if (!cancelled) setBalance('0');
-        }
-      } else if (direction === 'xlm_to_eth' && stellarAddress) {
+        try { setBalance(await fetchEthBalance(ethAddress)); } catch { setBalance('0'); }
+      } else if (src.symbol === 'XLM' && stellarAddress) {
         setBalance('Loading...');
-        try {
-          const bal = await fetchXlmBalance(stellarAddress);
-          if (!cancelled) {
-            console.log('✅ XLM balance loaded:', bal);
-            setBalance(bal);
-          }
-        } catch (err: any) {
-          console.error('❌ XLM balance fetch failed:', err);
-          if (!cancelled) setBalance('0');
-        }
+        try { setBalance(await fetchXlmBalance(stellarAddress)); } catch { setBalance('0'); }
+      } else if (src.symbol === 'SOL' && solanaAddress) {
+        setBalance('Loading...');
+        try { setBalance(await fetchSolBalance(solanaAddress)); } catch { setBalance('0'); }
       } else {
         setBalance('0');
       }
+      if (cancelled) return;
     };
 
     loadBalance();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [direction, ethAddress, stellarAddress, networkInfo.stellar.horizonUrl]);
+    return () => { cancelled = true; };
+  }, [direction, ethAddress, stellarAddress, solanaAddress, networkInfo.stellar.horizonUrl, networkInfo.isTestnet]);
   
   // Fetch live prices from the relayer whenever the user is about to need a
   // quote. The relayer caches CoinGecko responses for 60s, so a flurry of
@@ -317,15 +292,21 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
 
     let cancelled = false;
 
-    const computeWith = (rate: number) => {
+    const computeWith = (prices: { ethUsd: number; xlmUsd: number; solUsd: number }) => {
       const inputAmount = parseFloat(amount);
-      if (direction === 'eth_to_xlm') {
-        const xlmAmount = inputAmount * rate;
-        setEstimatedAmount(xlmAmount.toFixed(2));
-      } else {
-        const ethAmount = inputAmount / rate;
-        setEstimatedAmount(ethAmount.toFixed(6));
-      }
+      const from = DIRECTION_MAP[direction].from.symbol;
+      const to   = DIRECTION_MAP[direction].to.symbol;
+
+      const usdOf = (sym: string) =>
+        sym === 'ETH' ? prices.ethUsd : sym === 'XLM' ? prices.xlmUsd : prices.solUsd;
+
+      const fromUsd = usdOf(from);
+      const toUsd   = usdOf(to);
+      if (!fromUsd || !toUsd) return;
+
+      const outputAmount = (inputAmount * fromUsd) / toUsd;
+      const decimals = to === 'ETH' || to === 'SOL' ? 6 : 2;
+      setEstimatedAmount(outputAmount.toFixed(decimals));
     };
 
     const updateRateAndCalculate = async () => {
@@ -339,12 +320,9 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
         const xlmPerEth = Number(body?.xlmPerEth);
         const ethUsd = Number(body?.ethUsd);
         const xlmUsd = Number(body?.xlmUsd);
+        const solUsd = Number(body?.solUsd) || 150; // fallback if not yet in API
 
-        if (
-          !Number.isFinite(xlmPerEth) || xlmPerEth <= 0 ||
-          !Number.isFinite(ethUsd) || ethUsd <= 0 ||
-          !Number.isFinite(xlmUsd) || xlmUsd <= 0
-        ) {
+        if (!Number.isFinite(xlmPerEth) || xlmPerEth <= 0 || !Number.isFinite(ethUsd) || ethUsd <= 0 || !Number.isFinite(xlmUsd) || xlmUsd <= 0) {
           throw new Error('prices endpoint returned malformed data');
         }
 
@@ -355,18 +333,16 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
         setXlmUsdPrice(xlmUsd);
         setPriceSource(body?.source ?? 'coingecko');
         setRateLastUpdated(new Date(body?.fetchedAt ?? Date.now()));
-        computeWith(xlmPerEth);
+        computeWith({ ethUsd, xlmUsd, solUsd });
       } catch (err) {
         if (cancelled) return;
-        // Backend unreachable — fall back to the hardcoded rate but make it
-        // obvious in the UI so the user does not get a misleading estimate.
-        console.warn('Falling back to hardcoded rate (relayer /api/prices unavailable):', err);
+        console.warn('Falling back to hardcoded rate:', err);
         setExchangeRate(ETH_TO_XLM_RATE);
         setEthUsdPrice(null);
         setXlmUsdPrice(null);
         setPriceSource('fallback');
         setRateLastUpdated(new Date());
-        computeWith(ETH_TO_XLM_RATE);
+        computeWith({ ethUsd: 3500, xlmUsd: 0.35, solUsd: 150 });
       } finally {
         if (!cancelled) setIsLoadingRate(false);
       }
@@ -379,9 +355,13 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
     };
   }, [amount, direction]);
   
-  // Yön değiştirme
+  // Yön değiştirme — cycles ETH↔XLM, ETH↔SOL; Solana routes only if wallet connected
   const handleSwapDirection = () => {
-    setDirection(prev => prev === 'eth_to_xlm' ? 'xlm_to_eth' : 'eth_to_xlm');
+    setDirection(prev => {
+      const isSolanaRoute = prev === 'eth_to_sol' || prev === 'sol_to_eth';
+      if (isSolanaRoute) return prev === 'eth_to_sol' ? 'sol_to_eth' : 'eth_to_sol';
+      return prev === 'eth_to_xlm' ? 'xlm_to_eth' : 'eth_to_xlm';
+    });
     setAmount('');
     setEstimatedAmount('');
   };
@@ -400,12 +380,11 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
     
     if (!amount || !ethAddress || !stellarAddress) {
       console.error('❌ Missing required fields');
+      if (isSolanaDirection) {
+        if (!solanaAddress) { alert('Please connect your Phantom wallet.'); return; }
+      } else {
               alert('Please fill all fields and connect wallets.');
-      return;
-    }
-    
-    if (!window.ethereum) {
-      alert('MetaMask bulunamadı! Lütfen MetaMask yükleyin.');
+      }
       return;
     }
     
@@ -415,6 +394,8 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
     let result: any;
     
     try {
+      // For Solana-only routes, skip ETH network check and jump to SOL handling
+      if (!isSolanaDirection) {
       // Check network and switch if needed
       console.log('🔗 Checking network...');
       console.log('🔗 Expected network info:', networkInfo);
@@ -554,6 +535,7 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
         result = await response.json();
         console.log('✅ Mainnet order created via relayer:', result);
       }
+      } // end if (!isSolanaDirection)
       
       // Handle different transaction types based on direction
       if (direction === 'eth_to_xlm' && (result.approvalTransaction || result.proxyTransaction)) {
@@ -1091,6 +1073,61 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
           }
           return;
         }
+      } else if (direction === 'eth_to_sol' || direction === 'sol_to_eth') {
+        // SOL routes: Anchor program is in simulation mode — announce the order
+        // to the coordinator so the relayer can pick it up once the on-chain
+        // program is live.
+        console.log(`🔄 Solana bridge (${direction}) — coordinator announce`);
+        setStatusMessage('Announcing order...');
+
+        const solAmountLamports = Math.round(parseFloat(estimatedAmount || amount) * 1e9).toString();
+        const ethAmountWei = (BigInt(Math.round(parseFloat(amount) * 1e9)) * BigInt(1e9)).toString();
+
+        const announceBody = direction === 'eth_to_sol'
+          ? {
+              direction: 'eth_to_sol',
+              hashlock: `0x${'0'.repeat(64)}`, // placeholder — real hashlock set by relayer
+              srcChain: 'ethereum', srcAddress: ethAddress,
+              srcAsset: 'native', srcAmount: ethAmountWei, srcSafetyDeposit: '0',
+              dstChain: 'solana', dstAddress: solanaAddress,
+              dstAsset: 'native', dstAmount: solAmountLamports,
+            }
+          : {
+              direction: 'sol_to_eth',
+              hashlock: `0x${'0'.repeat(64)}`,
+              srcChain: 'solana', srcAddress: solanaAddress,
+              srcAsset: 'native', srcAmount: solAmountLamports, srcSafetyDeposit: '0',
+              dstChain: 'ethereum', dstAddress: ethAddress,
+              dstAsset: 'native', dstAmount: ethAmountWei,
+            };
+
+        const announceRes = await fetch(`${API_BASE_URL}/api/orders/announce`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(announceBody),
+        });
+
+        if (!announceRes.ok) {
+          const err = await announceRes.json().catch(() => ({}));
+          throw new Error(err.error || `Coordinator error: ${announceRes.status}`);
+        }
+
+        const announced = await announceRes.json();
+        console.log('✅ Solana order announced:', announced);
+
+        saveTransactionToHistory({
+          orderId: announced.publicId ?? announced.orderId ?? 'sol-' + Date.now(),
+          txHash: announced.publicId ?? 'pending',
+          direction: direction === 'eth_to_sol' ? 'eth-to-xlm' : 'xlm-to-eth',
+          amount, estimatedAmount,
+          ethAddress, stellarAddress: solanaAddress ?? '',
+          status: 'pending',
+        });
+
+        setOrderId(announced.publicId ?? announced.orderId);
+        setOrderCreated(true);
+        setStatusMessage('Order announced ✅');
+        setIsSubmitting(false);
       } else {
         // Fallback: show order created without transaction
         setOrderId(result.orderId);
@@ -1127,7 +1164,10 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
   };
 
   // Check if wallets are connected
-  const walletsConnected = ethAddress && stellarAddress;
+  const isSolanaDirection = direction === 'eth_to_sol' || direction === 'sol_to_eth';
+  const walletsConnected = isSolanaDirection
+    ? (direction === 'eth_to_sol' ? (ethAddress && solanaAddress) : (solanaAddress && ethAddress))
+    : (ethAddress && stellarAddress);
 
   return (
     <div className="w-full rounded-[1.25rem] p-4 swap-card-bg swap-card-border md:p-5 lg:p-6">
@@ -1182,6 +1222,34 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
                 <Settings2 className="h-4 w-4" />
               </button>
             </div>
+          </div>
+
+          {/* Route selector */}
+          <div className="flex gap-1.5 rounded-xl border border-white/[0.06] bg-white/[0.03] p-1">
+            {(['eth_to_xlm', 'xlm_to_eth', 'eth_to_sol', 'sol_to_eth'] as const).map((d) => {
+              const labels: Record<string, string> = {
+                eth_to_xlm: 'ETH → XLM', xlm_to_eth: 'XLM → ETH',
+                eth_to_sol: 'ETH → SOL', sol_to_eth: 'SOL → ETH',
+              };
+              const isSol = d === 'eth_to_sol' || d === 'sol_to_eth';
+              const active = direction === d;
+              return (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => { setDirection(d); setAmount(''); setEstimatedAmount(''); }}
+                  className={`flex-1 rounded-lg px-2 py-1.5 text-[0.65rem] font-semibold transition ${
+                    active
+                      ? isSol
+                        ? 'bg-purple-500/25 text-purple-200 border border-purple-500/30'
+                        : 'bg-[#4f6bff]/25 text-[#a8b4ff] border border-[#4f6bff]/30'
+                      : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {labels[d]}
+                </button>
+              );
+            })}
           </div>
 
           {/* From Section */}
@@ -1377,3 +1445,4 @@ export default function BridgeForm({ ethAddress, stellarAddress, signStellarTran
     </div>
   );
 }
+

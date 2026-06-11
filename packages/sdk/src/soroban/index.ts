@@ -16,7 +16,7 @@ export interface SorobanHTLCClientOptions {
   rpcUrl: string;
   /** Stellar network passphrase. */
   networkPassphrase: string;
-  /** Contract id of the deployed `stelleth-htlc` contract. */
+  /** Contract id of the deployed `wafflefinance-htlc` contract. */
   contractId: string;
   /** Allow plain HTTP (for local sandboxes). */
   allowHttp?: boolean;
@@ -35,7 +35,7 @@ export interface SorobanCreateOrderInput {
 }
 
 /**
- * Type-safe wrapper around the Stelleth Soroban HTLC contract.
+ * Type-safe wrapper around the WaffleFinance Soroban HTLC contract.
  *
  * The class builds the transaction envelopes; signing is delegated to
  * the caller's wallet (Freighter, headless keypair, etc) via a

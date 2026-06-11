@@ -4,7 +4,7 @@ let cached: Logger | null = null;
 
 export function getLogger(level: string = "info"): Logger {
   if (!cached) {
-    cached = pino({ level, base: { service: "stelleth-coordinator" } });
+    cached = pino({ level, base: { service: "wafflefinance-coordinator" } });
   }
   return cached;
 }

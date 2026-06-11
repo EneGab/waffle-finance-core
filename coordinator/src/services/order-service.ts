@@ -13,16 +13,18 @@ import { ordersTotal } from "../metrics.js";
 const HEX32 = /^0x[0-9a-fA-F]{64}$/;
 const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const STELLAR_ADDRESS = /^G[A-Z2-7]{55}$/;
+// Base-58 Solana pubkey: 32–44 alphanumeric chars excluding 0, O, I, l
+const SOLANA_ADDRESS = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 
 export const announceSchema = z.object({
-  direction: z.enum(["eth_to_xlm", "xlm_to_eth"]),
+  direction: z.enum(["eth_to_xlm", "xlm_to_eth", "eth_to_sol", "sol_to_eth"]),
   hashlock: z.string().regex(HEX32, "hashlock must be 0x + 64 hex chars"),
-  srcChain: z.enum(["ethereum", "stellar"]),
+  srcChain: z.enum(["ethereum", "stellar", "solana"]),
   srcAddress: z.string(),
   srcAsset: z.string().min(1),
   srcAmount: z.string().regex(/^\d+$/, "srcAmount must be a decimal integer string"),
   srcSafetyDeposit: z.string().regex(/^\d+$/, "srcSafetyDeposit must be a decimal integer string"),
-  dstChain: z.enum(["ethereum", "stellar"]),
+  dstChain: z.enum(["ethereum", "stellar", "solana"]),
   dstAddress: z.string(),
   dstAsset: z.string().min(1),
   dstAmount: z.string().regex(/^\d+$/, "dstAmount must be a decimal integer string")
@@ -46,12 +48,17 @@ function validateChainAddress(chain: Chain, addr: string): void {
   if (chain === "stellar" && !STELLAR_ADDRESS.test(addr)) {
     throw new OrderValidationError(`${addr} is not a valid Stellar account`);
   }
+  if (chain === "solana" && !SOLANA_ADDRESS.test(addr)) {
+    throw new OrderValidationError(`${addr} is not a valid Solana address`);
+  }
 }
 
 function validateDirectionAgainstChains(input: AnnounceInput): void {
   const expected: Record<Direction, { src: Chain; dst: Chain }> = {
     eth_to_xlm: { src: "ethereum", dst: "stellar" },
-    xlm_to_eth: { src: "stellar", dst: "ethereum" }
+    xlm_to_eth: { src: "stellar",  dst: "ethereum" },
+    eth_to_sol:  { src: "ethereum", dst: "solana"   },
+    sol_to_eth:  { src: "solana",   dst: "ethereum"  },
   };
   const want = expected[input.direction];
   if (want.src !== input.srcChain || want.dst !== input.dstChain) {
@@ -101,6 +108,10 @@ export class OrderService {
 
   findByHashlock(hashlock: string): Promise<OrderRow | null> {
     return this.repo.findByHashlock(hashlock);
+  }
+
+  findBySrcOrderId(chain: Chain, orderId: string): Promise<OrderRow | null> {
+    return this.repo.findBySrcOrderId(chain, orderId);
   }
 
   async recordSrcLock(input: {

@@ -2,6 +2,8 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+const sdkSrc = path.resolve(__dirname, '../packages/sdk/src');
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.
@@ -12,9 +14,13 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     resolve: {
-      alias: {
-        '@': path.resolve(__dirname, './src'),
-      },
+      alias: [
+        // Resolve workspace SDK directly from TypeScript source so no
+        // separate build step is needed during local development.
+        { find: /^@wafflefinance\/sdk\/(.+)$/, replacement: `${sdkSrc}/$1/index.ts` },
+        { find: '@wafflefinance/sdk', replacement: `${sdkSrc}/index.ts` },
+        { find: '@', replacement: path.resolve(__dirname, './src') },
+      ],
     },
     server: {
       port: Number(env.VITE_APP_PORT) || 5173,

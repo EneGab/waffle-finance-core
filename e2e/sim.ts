@@ -127,7 +127,7 @@ export class EvmHtlcSim extends BaseHtlcSim implements HtlcSim {
 }
 
 /**
- * Faithful re-encoding of the Soroban stelleth-htlc claim branch. The
+ * Faithful re-encoding of the Soroban wafflefinance-htlc claim branch. The
  * Soroban contract accepts a preimage only when sha256(preimage) equals
  * the stored hashlock — keccak256 is not consulted.
  */

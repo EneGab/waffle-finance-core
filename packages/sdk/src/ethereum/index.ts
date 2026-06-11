@@ -47,7 +47,7 @@ export interface OrderData {
 }
 
 /**
- * Type-safe wrapper around the Stelleth `HTLCEscrow` contract.
+ * Type-safe wrapper around the WaffleFinance `HTLCEscrow` contract.
  *
  * The class intentionally avoids hiding viem — both `publicClient` and
  * `walletClient` are passed in directly so callers can plug in any

@@ -6,8 +6,8 @@ import { registerCommand, statusCommand, unregisterCommand } from "./commands/re
 const program = new Command();
 
 program
-  .name("stelleth-resolver")
-  .description("Reference resolver runner for the Stelleth cross-chain bridge")
+  .name("wafflefinance-resolver")
+  .description("Reference resolver runner for the WaffleFinance cross-chain bridge")
   .version("0.1.0");
 
 program

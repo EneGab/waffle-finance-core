@@ -10,8 +10,8 @@ import {IHTLCEscrow} from "./interfaces/IHTLCEscrow.sol";
 import {IResolverRegistry} from "./interfaces/IResolverRegistry.sol";
 
 /// @title HTLCEscrow
-/// @notice Stelleth v2 canonical Ethereum-side HTLC. Mirrors the
-///         Stelleth Soroban HTLC; the two contracts together implement
+/// @notice WaffleFinance v2 canonical Ethereum-side HTLC. Mirrors the
+///         WaffleFinance Soroban HTLC; the two contracts together implement
 ///         atomic cross-chain swaps with these properties:
 ///
 ///         1. Funds locked by `createOrder` can only move under two

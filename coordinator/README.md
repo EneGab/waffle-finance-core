@@ -1,6 +1,6 @@
-# @stelleth/coordinator
+# @wafflefinance/coordinator
 
-Reference coordinator (formerly "relayer") for the Stelleth cross-chain
+Reference coordinator (for the WaffleFinance cross-chain
 bridge.
 
 ## What this service does
@@ -35,7 +35,7 @@ pnpm dev
 ```
 
 By default the coordinator listens on `:3001` and writes to
-`./stelleth.db`. Override with env vars (see `env.example`).
+`./wafflefinance.db`. Override with env vars (see `env.example`).
 
 ## Architecture
 
@@ -75,11 +75,11 @@ The coordinator stores order state in a local database. Two database engines are
 ### SQLite (Local Development - Default)
 
 We use Node's built-in `node:sqlite` driver — no native addons, no
-build step. By default, the coordinator writes to `./stelleth.db` in the working directory.
+build step. By default, the coordinator writes to `./wafflefinance.db` in the working directory.
 
 ```bash
 pnpm dev
-# Writes to ./stelleth.db (file:./stelleth.db)
+# Writes to ./wafflefinance.db (file:./wafflefinance.db)
 ```
 
 ### PostgreSQL (Production)
@@ -88,7 +88,7 @@ For production deployments, swap the database to Postgres by setting the
 `DATABASE_URL` environment variable:
 
 ```bash
-DATABASE_URL=postgresql://user:password@localhost:5432/stelleth pnpm start
+DATABASE_URL=postgresql://user:password@localhost:5432/wafflefinance pnpm start
 ```
 
 The schema in `coordinator/migrations/` is applied automatically on startup.
@@ -112,14 +112,14 @@ To test the coordinator against a PostgreSQL database:
 ```bash
 # Start a Postgres container (requires Docker)
 docker run -d \
-  --name stelleth-postgres \
-  -e POSTGRES_DB=stelleth \
+  --name wafflefinance-postgres \
+  -e POSTGRES_DB=wafflefinance \
   -e POSTGRES_PASSWORD=password \
   -p 5432:5432 \
   postgres:15
 
 # Set DATABASE_URL and run the coordinator
-DATABASE_URL=postgresql://postgres:password@localhost:5432/stelleth pnpm dev
+DATABASE_URL=postgresql://postgres:password@localhost:5432/wafflefinance pnpm dev
 
 # In another terminal, test an order creation
 curl -X POST http://localhost:3001/api/orders/announce \
@@ -139,7 +139,7 @@ curl -X POST http://localhost:3001/api/orders/announce \
   }'
 
 # Cleanup
-docker stop stelleth-postgres && docker rm stelleth-postgres
+docker stop wafflefinance-postgres && docker rm wafflefinance-postgres
 ```
 
 The schema migrations in `coordinator/migrations/` are applied automatically

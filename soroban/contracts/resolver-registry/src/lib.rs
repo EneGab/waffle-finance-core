@@ -1,5 +1,5 @@
 #![no_std]
-//! Open resolver registry for the OverSync bridge.
+//! Open resolver registry for the WaffleFinance bridge.
 //!
 //! Resolvers stake a configurable amount of a chosen token to become
 //! eligible to fill swap orders. Misbehaving resolvers can be slashed
@@ -303,3 +303,4 @@ impl ResolverRegistry {
         admin.require_auth();
     }
 }
+

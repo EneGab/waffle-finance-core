@@ -1,5 +1,5 @@
 /**
- * @fileoverview Ethereum Event Listener for FusionBridge
+ * @fileoverview Ethereum Event Listener for WaffleFinance
  * @description Monitors HTLCBridge contract events and triggers Stellar operations
  */
 

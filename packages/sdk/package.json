@@ -1,7 +1,7 @@
 {
-  "name": "@stelleth/sdk",
+  "name": "@wafflefinance/sdk",
   "version": "0.1.0",
-  "description": "TypeScript SDK for the Stelleth cross-chain bridge: Ethereum + Soroban HTLC clients, secret utilities, and a shared order state machine.",
+  "description": "TypeScript SDK for the WaffleFinance cross-chain bridge: Ethereum + Soroban HTLC clients, secret utilities, and a shared order state machine.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -26,6 +26,14 @@
       "import": "./dist/state-machine/index.js",
       "types": "./dist/state-machine/index.d.ts"
     },
+    "./solana": {
+      "import": "./dist/solana/index.js",
+      "types": "./dist/solana/index.d.ts"
+    },
+    "./assets": {
+      "import": "./dist/assets/index.js",
+      "types": "./dist/assets/index.d.ts"
+    },
     "./types": {
       "import": "./dist/types/index.js",
       "types": "./dist/types/index.d.ts"
@@ -35,9 +43,11 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
+    "lint": "eslint src --ext .ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@solana/web3.js": "^1.98.4",
     "@stellar/stellar-sdk": "^13.0.0",
     "viem": "^2.21.0"
   },

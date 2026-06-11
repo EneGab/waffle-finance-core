@@ -1,5 +1,5 @@
 -- Migration: 001_initial
--- Initial schema for OverSync coordinator persistence.
+-- Initial schema for WaffleFinance coordinator persistence.
 -- This DB is treated as a CACHE — the source of truth is always the
 -- on-chain state of the HTLC contracts on both chains. The coordinator
 -- can rebuild this DB by re-reading events from both chains.
@@ -70,3 +70,4 @@ CREATE TABLE IF NOT EXISTS resolver_heartbeats (
     chain       TEXT NOT NULL CHECK (chain IN ('ethereum', 'stellar')),
     last_seen   INTEGER NOT NULL
 );
+

@@ -9,9 +9,9 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/karagozemin/Stelleth-1nchFusion"
-homepage = "https://github.com/karagozemin/Stelleth-1nchFusion"
-authors = ["Stelleth contributors"]
+repository = "https://github.com/karagozemin/wafflefinance"
+homepage = "https://github.com/karagozemin/wafflefinance"
+authors = ["WaffleFinance contributors"]
 
 [workspace.dependencies]
 soroban-sdk = "22.0.8"
