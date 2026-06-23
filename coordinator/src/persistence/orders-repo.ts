@@ -364,10 +364,12 @@ export class OrdersRepository {
     let nextCursor: string | null = null;
     if (orders.length === limit) {
       const lastOrder = orders[orders.length - 1];
-      nextCursor = this.encodeCursor({
-        createdAt: lastOrder.createdAt,
-        id: lastOrder.id
-      });
+      if (lastOrder) {
+        nextCursor = this.encodeCursor({
+          createdAt: lastOrder.createdAt,
+          id: lastOrder.id
+        });
+      }
     }
 
     return { orders, nextCursor };
