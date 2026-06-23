@@ -93,6 +93,9 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
     const address = parsedAddress.data;
     const limit = Math.min(Number(req.query.limit ?? 50), 200);
 
+    // Support both cursor-based (preferred) and offset-based (legacy) pagination
+    const cursor = req.query.cursor as string | undefined;
+
     try {
       if (cursor !== undefined || req.query.offset === undefined) {
         // Use cursor-based pagination (preferred)
@@ -117,7 +120,7 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
     } catch (err) {
       // Handle invalid cursor gracefully
       if (err instanceof Error && err.message.includes('Invalid cursor')) {
-        res.status(400).json({ 
+        res.status(400).json({
           error: "invalid_cursor", 
           message: "The provided cursor is invalid or expired" 
         });
