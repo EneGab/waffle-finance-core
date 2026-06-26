@@ -40,7 +40,10 @@ export class OrderService {
     }
 
     const order = await this.repo.announce(input as AnnounceOrderInput);
-    this.log.info({ publicId: order.publicId, direction: order.direction }, "order announced");
+    this.log.info(
+      { publicId: order.publicId, direction: order.direction, hashlock: order.hashlock },
+      "order announced"
+    );
     ordersTotal.inc({ status: "announced" });
     return order;
   }
