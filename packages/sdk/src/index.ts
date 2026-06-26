@@ -1,26 +1,71 @@
-export * from "./types/index.js";
-export * from "./secrets/index.js";
-export * from "./state-machine/index.js";
-export * from "./assets/index.js";
+// Types
+export type {
+  Chain,
+  Direction,
+  OrderStatus,
+  Order,
+  ChainLeg,
+  ResolverInfo,
+  ExternalBridgeKind,
+  ExternalBridgeRoute,
+  ExternalBridgeAdapter,
+} from "./types/index.js";
+
+// Secrets
+export {
+  generateSecret,
+  hashSecret,
+  verifyPreimage,
+  type Secret,
+} from "./secrets/index.js";
+
+// State Machine
+export {
+  InvalidTransitionError,
+  canTransition,
+  requireTransition,
+  isTerminal,
+  nextStatesOf,
+} from "./state-machine/index.js";
+
+// Assets
+export {
+  NATIVE_ETH_ADDRESS,
+  NATIVE_STELLAR_ASSET,
+  NATIVE_SOL_MINT,
+  NATIVE_SOL_ASSET,
+  resolveStellarAsset,
+  resolveEthereumToken,
+  resolveSolanaAsset,
+  resolveEthereumTokenFromSolana,
+  type AssetMappingNetwork,
+  type CanonicalStellarAsset,
+  type CanonicalSolanaAsset,
+} from "./assets/index.js";
+
+// Ethereum
 export {
   EthereumHTLCClient,
   HTLC_ESCROW_ABI,
   type CreateOrderInput,
   type EthereumHTLCClientOptions,
-  type OrderData
+  type OrderData,
 } from "./ethereum/index.js";
+
+// Soroban
 export {
   SorobanHTLCClient,
   makeKeypairSigner,
   type SorobanHTLCClientOptions,
   type SorobanCreateOrderInput,
-  type SorobanSigner
+  type SorobanSigner,
 } from "./soroban/index.js";
+
+// Solana
 export {
   SolanaHTLCClient,
-  NATIVE_SOL_MINT,
   type SolanaHTLCClientOptions,
   type SolanaCreateOrderInput,
   type SolanaOrderData,
-  type SolanaSigner
+  type SolanaSigner,
 } from "./solana/index.js";

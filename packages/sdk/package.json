@@ -5,6 +5,7 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "sideEffects": false,
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -39,8 +40,13 @@
       "types": "./dist/types/index.d.ts"
     }
   },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
+    "build:analyze": "tsc && npm run analyze",
+    "analyze": "node scripts/analyze-bundle.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
