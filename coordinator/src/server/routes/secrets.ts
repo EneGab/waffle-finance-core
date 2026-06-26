@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import type { Logger } from "pino";
 import type { SecretService } from "../../services/secret-service.js";
+import { SecretRevealError } from "../../services/secret-errors.js";
 import { makeRateLimiter, loadApiKeys, loadTrustedProxies } from "../middleware/ratelimit.js";
 
 export function secretsRoutes(secrets: SecretService, log?: Logger): Router {
@@ -47,8 +48,16 @@ export function secretsRoutes(secrets: SecretService, log?: Logger): Router {
         res.status(400).json({ error: "validation_error", details: err.errors });
         return;
       }
-      if (err instanceof Error) {
-        res.status(400).json({ error: "secret_error", message: err.message });
+      // Classified reveal failures map to distinct status codes and stable
+      // `error` codes so clients can decide whether to retry or abandon.
+      // The error messages are pre-sanitized in SecretService and never
+      // contain secret material.
+      if (err instanceof SecretRevealError) {
+        res.status(err.httpStatus).json({
+          error: err.code,
+          message: err.message,
+          retryable: err.retryable
+        });
         return;
       }
       next(err);

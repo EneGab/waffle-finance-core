@@ -26,6 +26,26 @@ bridge.
 - Fabricate order or secret data. If the underlying chain does not
   respond, the endpoint returns the real error.
 
+## Secret reveal failure modes
+
+`POST /api/secrets/reveal` classifies failures so clients can decide whether
+to retry or abandon an attempt. Each failure returns a stable `error` code, an
+appropriate HTTP status, and a `retryable` flag:
+
+| `error` code       | HTTP | `retryable` | Meaning / client action |
+| ------------------ | ---- | ----------- | ----------------------- |
+| `validation_error` | 400  | n/a         | Malformed request body (missing/invalid fields). Fix the request. |
+| `invalid_preimage` | 400  | `false`     | The preimage does not hash (sha256 or keccak256) to the order hashlock. Abandon — the secret is wrong. |
+| `unknown_order`    | 404  | `false`     | No order exists for the supplied `publicId`. Abandon or check the id. |
+| `reveal_conflict`  | 409  | `false`     | The order has moved past the point where a reveal is accepted (stale/replayed reveal). Abandon. |
+| `storage_failure`  | 500  | `true`      | The preimage was valid but could not be persisted (transient DB error). Retry. |
+
+Error responses never include the submitted preimage, the on-chain secret, or
+the storage encryption key — only the `publicId` and a category description.
+The typed error model lives in [`src/services/secret-errors.ts`](src/services/secret-errors.ts)
+and is extensible: add a `SecretRevealError` subclass and the route layer maps
+it automatically.
+
 ## Quick start
 
 ```bash

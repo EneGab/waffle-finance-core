@@ -218,7 +218,7 @@ describe("POST /api/secrets/reveal", () => {
     expect(res.status).toBe(400);
   });
 
-  it("returns 400 for an unknown order (secret not accepted)", async () => {
+  it("returns a classified 404 for an unknown order (secret not accepted)", async () => {
     const app = await freshApp();
     const res = await request(app)
       .post("/api/secrets/reveal")
@@ -227,8 +227,11 @@ describe("POST /api/secrets/reveal", () => {
         preimage: "0x" + "ab".repeat(32),
         txHash: "0xabc"
       });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toBe("secret_error");
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe("unknown_order");
+    expect(res.body.retryable).toBe(false);
+    // The reveal error must never echo the submitted preimage.
+    expect(JSON.stringify(res.body)).not.toContain("ab".repeat(32));
   });
 
   it("returns 429 after the reveal rate limit (5/min) is exceeded", async () => {
@@ -239,12 +242,12 @@ describe("POST /api/secrets/reveal", () => {
       txHash: "0xabc"
     };
 
-    // First 5 attempts return 400 (unknown order), not 429.
+    // First 5 attempts return 404 (unknown order), not 429.
     for (let i = 0; i < 5; i++) {
       const res = await request(app)
         .post("/api/secrets/reveal")
         .send(payload);
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(404);
     }
 
     // The 6th attempt must be rate-limited.
@@ -297,9 +300,9 @@ describe("API key bypass", () => {
           .post("/api/secrets/reveal")
           .set("Authorization", "Bearer test-key-abc123")
           .send(payload);
-        // 400 = unknown order, not rate-limited
-        expect(res.status).toBe(400);
-        expect(res.body.error).toBe("secret_error");
+        // 404 = unknown order, not rate-limited
+        expect(res.status).toBe(404);
+        expect(res.body.error).toBe("unknown_order");
       }
     } finally {
       if (originalKeys === undefined) {
