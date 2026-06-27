@@ -11,6 +11,15 @@ export type {
   ExternalBridgeAdapter,
 } from "./types/index.js";
 
+// Shared HTLC interface + error types
+export {
+  HTLCError,
+  type IHTLCClient,
+  type HTLCCreateResult,
+  type HTLCTxResult,
+  type HTLCErrorCode,
+} from "./htlc-client.js";
+
 // Secrets
 export {
   generateSecret,
@@ -52,6 +61,9 @@ export {
   type OrderData,
 } from "./ethereum/index.js";
 
+// Ethereum — normalised adapter
+export { EthereumHTLCAdapter } from "./ethereum/adapter.js";
+
 // Soroban
 export {
   SorobanHTLCClient,
@@ -61,6 +73,14 @@ export {
   type SorobanSigner,
 } from "./soroban/index.js";
 
+// Soroban — normalised adapter
+export {
+  SorobanHTLCAdapter,
+  encodeSorobanOrderRef,
+  decodeSorobanOrderRef,
+  type SorobanAdapterCreateInput,
+} from "./soroban/adapter.js";
+
 // Solana
 export {
   SolanaHTLCClient,
@@ -69,3 +89,6 @@ export {
   type SolanaOrderData,
   type SolanaSigner,
 } from "./solana/index.js";
+
+// Solana — normalised adapter
+export { SolanaHTLCAdapter } from "./solana/adapter.js";
