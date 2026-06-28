@@ -7,6 +7,7 @@ import { OrderValidationError } from "../../services/order-service.js";
 import { announceSchema } from "../../validation/announce.js";
 import { historyAddressSchema } from "../../validation/address.js";
 import { makeRateLimiter, loadApiKeys, loadTrustedProxies } from "../middleware/ratelimit.js";
+import { validationError, orderValidationError, notFoundError } from "../errors.js";
 
 function serialiseOrder(order: OrderRow | null) {
   if (!order) return null;
@@ -71,11 +72,11 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
       res.status(201).json(serialiseOrder(order));
     } catch (err) {
       if (err instanceof z.ZodError) {
-        res.status(400).json({ error: "validation_error", details: err.errors });
+        res.status(400).json(validationError(err.errors));
         return;
       }
       if (err instanceof OrderValidationError) {
-        res.status(400).json({ error: "order_validation_error", message: err.message });
+        res.status(400).json(orderValidationError(err.message));
         return;
       }
       next(err);
@@ -87,7 +88,7 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
   router.get("/orders/history", async (req, res, next) => {
     const parsedAddress = historyAddressSchema.safeParse(req.query.address);
     if (!parsedAddress.success) {
-      res.status(400).json({ error: "validation_error", details: parsedAddress.error.errors });
+      res.status(400).json(validationError(parsedAddress.error.errors));
       return;
     }
     const address = parsedAddress.data;
@@ -109,7 +110,7 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
     try {
       const order = await orders.get(id);
       if (!order) {
-        res.status(404).json({ error: "not_found" });
+        res.status(404).json(notFoundError("Order not found"));
         return;
       }
       res.json(serialiseOrder(order));
@@ -132,11 +133,11 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
       res.json({ ok: true });
     } catch (err) {
       if (err instanceof z.ZodError) {
-        res.status(400).json({ error: "validation_error", details: err.errors });
+        res.status(400).json(validationError(err.errors));
         return;
       }
       if (err instanceof OrderValidationError) {
-        res.status(400).json({ error: "order_validation_error", message: err.message });
+        res.status(400).json(orderValidationError(err.message));
         return;
       }
       next(err);
@@ -157,11 +158,11 @@ export function ordersRoutes(orders: OrderService, log?: Logger): Router {
       res.json({ ok: true });
     } catch (err) {
       if (err instanceof z.ZodError) {
-        res.status(400).json({ error: "validation_error", details: err.errors });
+        res.status(400).json(validationError(err.errors));
         return;
       }
       if (err instanceof OrderValidationError) {
-        res.status(400).json({ error: "order_validation_error", message: err.message });
+        res.status(400).json(orderValidationError(err.message));
         return;
       }
       next(err);
