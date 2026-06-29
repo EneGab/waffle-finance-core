@@ -36,7 +36,12 @@
     "frontend:build": "pnpm --filter @wafflefinance/frontend build",
     "frontend:preview": "pnpm --filter @wafflefinance/frontend preview",
     "health:check": "curl -s http://localhost:3001/health | jq .",
-    "validate:manifests": "node scripts/validate-workspace.mjs"
+    "validate:manifests": "node scripts/validate-workspace.mjs",
+    "release:prepare": "node scripts/prepare-release.mjs",
+    "release:patch": "node scripts/prepare-release.mjs patch",
+    "release:minor": "node scripts/prepare-release.mjs minor",
+    "release:major": "node scripts/prepare-release.mjs major",
+    "release:publish": "pnpm -r publish --access public"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

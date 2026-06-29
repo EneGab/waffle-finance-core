@@ -44,7 +44,8 @@ export class EthereumListener {
       try {
         const lastBlock = await this.orders.getLastProcessedBlock("ethereum");
         const latest = await this.client.getBlockNumber();
-        const fromBlock = lastBlock > 0 ? BigInt(lastBlock) : (latest > 1000n ? latest - 1000n : 0n);
+        // Increased lookback from 1000 to 5000 blocks to catch more missed events
+        const fromBlock = lastBlock > 0 ? BigInt(lastBlock) : (latest > 5000n ? latest - 5000n : 0n);
 
         if (fromBlock < latest) {
           this.log.info({ fromBlock, toBlock: latest }, "replaying historical logs on startup");
@@ -60,6 +61,7 @@ export class EthereumListener {
         this.watchNewEvents(address, latest + 1n);
       } catch (err) {
         this.log.error({ err }, "failed to initialize Ethereum listener catch-up");
+        // Still attempt to watch new events even if catch-up fails
         this.watchNewEvents(address);
       }
     })();
