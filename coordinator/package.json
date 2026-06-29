@@ -16,6 +16,7 @@
     "seed-demo": "tsx scripts/seed-demo.ts"
   },
   "dependencies": {
+    "@wafflefinance/config": "workspace:*",
     "@solana/web3.js": "^1.98.4",
     "@stellar/stellar-sdk": "^13.0.0",
     "@types/cors": "^2.8.17",
