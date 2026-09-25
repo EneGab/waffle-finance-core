@@ -419,9 +419,7 @@ export class RecoveryService extends EventEmitter {
       recovery.status === RecoveryStatus.Completed ||
       recovery.status === RecoveryStatus.Cancelled
     ) {
-      console.log(
-        `⏭️  orderHash=${recovery.orderHash} Skipping retry for ${recoveryId} — already ${recovery.status}`,
-      );
+      log.info({ orderHash: recovery.orderHash, recoveryId, status: recovery.status }, 'skipping retry — already finalised');
       return;
     }
 
