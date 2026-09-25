@@ -39,6 +39,8 @@ export interface BridgeFormProps {
   stellarAddress: string;
   solanaAddress?: string;
   signStellarTransaction: (xdr: string, networkPassphrase?: string) => Promise<string>;
+  /** When true, submission is blocked due to a wallet mismatch or disconnection. */
+  walletBlocked?: boolean;
 }
 
 const ETH_TOKEN = { symbol: 'ETH', name: 'Ethereum',      logo: '/images/eth.png', chain: 'Ethereum', decimals: 18 };
@@ -278,7 +280,7 @@ function directionToChains(dir: BridgeDirection): { srcChain: SupportedChain; ds
   return { srcChain: resolve(parts[0]), dstChain: resolve(parts[1]) };
 }
 
-export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, signStellarTransaction }: BridgeFormProps): React.JSX.Element {
+export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, signStellarTransaction, walletBlocked = false }: BridgeFormProps): React.JSX.Element {
   // ── wagmi v2 hooks ──────────────────────────────────────────────────────
   // sendTransactionAsync returns a tx hash immediately after the user signs;
   // we then poll for the receipt exactly as before.
@@ -642,6 +644,11 @@ export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, 
     // Deduplication guard: the async handler may still be running from a
     // previous click if the user double-taps. Do not start a second flight.
     if (isSubmittingRef.current) return;
+
+    // Wallet-state guard: block submission when a chain mismatch or
+    // disconnection is detected. The WalletStateBanner above the form
+    // already shows the user what to fix.
+    if (walletBlocked) return;
 
     const errors: Record<string, string> = {};
     const routeResult = validateRouteWallets(direction, ethAddress, stellarAddress, (solanaAddress ?? '').trim());
@@ -1748,14 +1755,19 @@ export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, 
           {/* Submit Button */}
           <button
             type="submit"
-            disabled={isSubmitting || !amount || !walletsConnected || Boolean(recoveryNotice)}
+            disabled={isSubmitting || !amount || !walletsConnected || Boolean(recoveryNotice) || walletBlocked}
+            aria-disabled={isSubmitting || !amount || !walletsConnected || Boolean(recoveryNotice) || walletBlocked}
             className={`button-hover-scale w-full rounded-full py-3.5 font-semibold transition-all ${
-              walletsConnected && !recoveryNotice
-                ? 'brand-cta'
-                : 'cursor-not-allowed border border-white/5 bg-slate-700/45 text-slate-400'
+              walletBlocked
+                ? 'cursor-not-allowed border border-amber-400/25 bg-amber-500/10 text-amber-300'
+                : walletsConnected && !recoveryNotice
+                  ? 'brand-cta'
+                  : 'cursor-not-allowed border border-white/5 bg-slate-700/45 text-slate-400'
             }`}
           >
-            {recoveryNotice
+            {walletBlocked
+              ? 'Fix Wallet Issue Above'
+              : recoveryNotice
               ? 'Reconnect Wallet'
               : !walletsConnected
               ? 'Connect Wallet'
