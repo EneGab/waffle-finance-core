@@ -70,6 +70,9 @@ describe("HTLCError", () => {
       "timelock_not_expired",
       "invalid_preimage",
       "simulation_mode",
+      "insufficient_allowance",
+      "resolver_not_authorised",
+      "safety_deposit_too_small",
       "chain_error",
     ] as const;
     for (const code of codes) {
@@ -132,7 +135,7 @@ describe("EthereumHTLCAdapter", () => {
 
     it("wraps simulation/revert errors as HTLCError(simulation_failed)", async () => {
       mockClient.createOrder.mockRejectedValue(
-        new Error("Simulation failed: InsufficientAllowance")
+        new Error("execution reverted: InvalidValue()")
       );
       await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
         code: "simulation_failed",
@@ -145,6 +148,57 @@ describe("EthereumHTLCAdapter", () => {
       await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
         code: "simulation_failed",
         retryable: false,
+      });
+    });
+
+    it("wraps InsufficientAllowance revert as HTLCError(insufficient_allowance)", async () => {
+      mockClient.createOrder.mockRejectedValue(
+        new Error("simulation: InsufficientAllowance(0, 1000000000000000000)")
+      );
+      await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
+        code: "insufficient_allowance",
+        retryable: false,
+      });
+    });
+
+    it("wraps insufficient allowance (lowercase) as HTLCError(insufficient_allowance)", async () => {
+      mockClient.createOrder.mockRejectedValue(
+        new Error("reverted: insufficient allowance for transfer")
+      );
+      await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
+        code: "insufficient_allowance",
+        retryable: false,
+      });
+    });
+
+    it("wraps ResolverNotAuthorised revert as HTLCError(resolver_not_authorised)", async () => {
+      mockClient.createOrder.mockRejectedValue(
+        new Error("simulation: ResolverNotAuthorised()")
+      );
+      await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
+        code: "resolver_not_authorised",
+        retryable: false,
+      });
+    });
+
+    it("wraps SafetyDepositTooSmall revert as HTLCError(safety_deposit_too_small)", async () => {
+      mockClient.createOrder.mockRejectedValue(
+        new Error("simulation: SafetyDepositTooSmall()")
+      );
+      await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
+        code: "safety_deposit_too_small",
+        retryable: false,
+      });
+    });
+
+    it("insufficient_allowance takes priority over simulation_failed", async () => {
+      // A viem message that contains both "simulat" and "InsufficientAllowance"
+      // must be classified as insufficient_allowance, not simulation_failed.
+      mockClient.createOrder.mockRejectedValue(
+        new Error("simulate contract — InsufficientAllowance(0, 500)")
+      );
+      await expect(adapter.createOrder({} as any)).rejects.toMatchObject({
+        code: "insufficient_allowance",
       });
     });
 
@@ -331,14 +385,15 @@ describe("SorobanHTLCAdapter", () => {
         STELLAR_ADDR,
         BigInt(7),
         PREIMAGE,
-        fakeSigner
+        fakeSigner,
+        undefined, // orchestration config (not set on this adapter instance)
       );
     });
 
     it("handles a plain numeric orderId (no caller prefix)", async () => {
       mockClient.claimOrder.mockResolvedValue("tx");
       await adapter.claimOrder("5", PREIMAGE, fakeSigner);
-      expect(mockClient.claimOrder).toHaveBeenCalledWith("", BigInt(5), PREIMAGE, fakeSigner);
+      expect(mockClient.claimOrder).toHaveBeenCalledWith("", BigInt(5), PREIMAGE, fakeSigner, undefined);
     });
   });
 
@@ -351,7 +406,7 @@ describe("SorobanHTLCAdapter", () => {
       const result = await adapter.refundOrder(ref, fakeSigner);
 
       expect(result.txId).toBe("refund-tx");
-      expect(mockClient.refundOrder).toHaveBeenCalledWith(STELLAR_ADDR, BigInt(3), fakeSigner);
+      expect(mockClient.refundOrder).toHaveBeenCalledWith(STELLAR_ADDR, BigInt(3), fakeSigner, undefined);
     });
   });
 });

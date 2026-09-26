@@ -15,6 +15,8 @@ const VALID_STELLAR_SECRET = "S" + "A".repeat(55); // 56-char S-prefixed key
 const VALID_ENV = {
   ETHEREUM_RPC_URL: "https://eth-mainnet.example.com/v3/key",
   STELLAR_HORIZON_URL: "https://horizon.stellar.org",
+  SOROBAN_RPC_URL: "https://soroban-testnet.stellar.org",
+  STELLAR_NETWORK_PASSPHRASE: "Test SDF Network ; September 2015",
 };
 const VALID_CFG = {
   ethereumPrivateKey: VALID_ETH_KEY,
@@ -220,5 +222,59 @@ describe("formatStartupErrors", () => {
     const formatted = formatStartupErrors(errors);
     expect(formatted).toContain("ETHEREUM_RPC_URL");
     expect(formatted).toContain("missing");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Negative polling intervals
+// ---------------------------------------------------------------------------
+
+describe("validateRelayerStartup — negative polling intervals", () => {
+  it("rejects a negative RELAYER_ACTIVE_POLL_INTERVAL_MS", () => {
+    const errors = validateRelayerStartup(
+      { ...VALID_ENV, RELAYER_ACTIVE_POLL_INTERVAL_MS: "-5000" },
+      VALID_CFG
+    );
+    expect(fieldCodes(errors)["RELAYER_ACTIVE_POLL_INTERVAL_MS"]).toBe("invalid_value");
+  });
+
+  it("rejects a negative RELAYER_IDLE_POLL_INTERVAL_MS", () => {
+    const errors = validateRelayerStartup(
+      { ...VALID_ENV, RELAYER_IDLE_POLL_INTERVAL_MS: "-1000" },
+      VALID_CFG
+    );
+    expect(fieldCodes(errors)["RELAYER_IDLE_POLL_INTERVAL_MS"]).toBe("invalid_value");
+  });
+
+  it("rejects a non-numeric RELAYER_ACTIVE_POLL_INTERVAL_MS", () => {
+    const errors = validateRelayerStartup(
+      { ...VALID_ENV, RELAYER_ACTIVE_POLL_INTERVAL_MS: "abc" },
+      VALID_CFG
+    );
+    expect(fieldCodes(errors)["RELAYER_ACTIVE_POLL_INTERVAL_MS"]).toBe("invalid_value");
+  });
+
+  it("accepts a valid positive polling interval", () => {
+    const errors = validateRelayerStartup(
+      { ...VALID_ENV, RELAYER_ACTIVE_POLL_INTERVAL_MS: "15000", RELAYER_IDLE_POLL_INTERVAL_MS: "120000" },
+      VALID_CFG
+    );
+    expect(fieldCodes(errors)["RELAYER_ACTIVE_POLL_INTERVAL_MS"]).toBeUndefined();
+    expect(fieldCodes(errors)["RELAYER_IDLE_POLL_INTERVAL_MS"]).toBeUndefined();
+  });
+
+  it("accepts zero polling interval (disabled polling)", () => {
+    const errors = validateRelayerStartup(
+      { ...VALID_ENV, RELAYER_ACTIVE_POLL_INTERVAL_MS: "0", RELAYER_IDLE_POLL_INTERVAL_MS: "0" },
+      VALID_CFG
+    );
+    expect(fieldCodes(errors)["RELAYER_ACTIVE_POLL_INTERVAL_MS"]).toBeUndefined();
+    expect(fieldCodes(errors)["RELAYER_IDLE_POLL_INTERVAL_MS"]).toBeUndefined();
+  });
+
+  it("does not report polling interval error when env var is absent", () => {
+    const errors = validateRelayerStartup(VALID_ENV, VALID_CFG);
+    expect(fieldCodes(errors)["RELAYER_ACTIVE_POLL_INTERVAL_MS"]).toBeUndefined();
+    expect(fieldCodes(errors)["RELAYER_IDLE_POLL_INTERVAL_MS"]).toBeUndefined();
   });
 });
