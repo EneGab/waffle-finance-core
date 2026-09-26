@@ -1,4 +1,5 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { type Logger } from "pino";
 import {
   describeSupportPolicy,
   supportsAction,
@@ -23,6 +24,11 @@ export interface ResolverHealthDeps {
   policy?: SupportPolicy;
   /** Chains to report liveness for on GET /telemetry. Defaults to ["ethereum", "soroban"]. */
   telemetryChains?: string[];
+  /**
+   * Optional logger.  When provided, the telemetry collector emits a log line
+   * on every resolver liveness state transition (connected/degraded/stale/inactive).
+   */
+  log?: Logger;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -204,7 +210,7 @@ export function createResolverHealthServer(deps: ResolverHealthDeps): Server {
     // job" without reading raw logs. See src/telemetry.ts.
     if (req.url === "/telemetry") {
       telemetryCollector
-        .collect({ supervisor: deps.supervisor, chains: telemetryChains })
+        .collect({ supervisor: deps.supervisor, chains: telemetryChains, log: deps.log })
         .then((snapshot) => {
           json(res, snapshot.state === "inactive" ? 503 : 200, {
             ...snapshot,

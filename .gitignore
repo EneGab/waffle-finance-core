@@ -114,4 +114,12 @@ temp/
 !.vscode/extensions.json
 !.vscode/settings.json
 !.vscode/tasks.json
-!.vscode/launch.json 
+!.vscode/launch.json
+
+# Test snapshots
+**/__snapshots__/
+**/*.snap
+**/test-snapshots/
+
+# Local config files
+*.local

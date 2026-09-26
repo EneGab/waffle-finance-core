@@ -165,6 +165,32 @@ export function validateRelayerStartup(
     });
   }
 
+  // ── Coordinator URL (required for dependency health checks) ───────────────
+
+  const coordinatorUrl = env["COORDINATOR_URL"];
+  if (!coordinatorUrl) {
+    errors.push({
+      field: "COORDINATOR_URL",
+      code: "missing",
+      message:
+        "COORDINATOR_URL is not set. The relayer requires a reachable coordinator to announce " +
+        "orders and verify resolver availability. Set COORDINATOR_URL to the coordinator's base URL " +
+        "(e.g. http://localhost:4000).",
+    });
+  } else if (isPlaceholder(coordinatorUrl)) {
+    errors.push({
+      field: "COORDINATOR_URL",
+      code: "placeholder",
+      message: `COORDINATOR_URL looks like a placeholder value (${coordinatorUrl}). Set the real coordinator URL.`,
+    });
+  } else if (!isHttpUrl(coordinatorUrl)) {
+    errors.push({
+      field: "COORDINATOR_URL",
+      code: "invalid_format",
+      message: `COORDINATOR_URL must be an http(s) URL, got: ${coordinatorUrl}`,
+    });
+  }
+
   return errors;
 }
 

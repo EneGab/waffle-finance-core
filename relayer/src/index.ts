@@ -406,6 +406,7 @@ export const RELAYER_CONFIG = {
 };
 
 import { validateRelayerStartup, formatStartupErrors } from './config-validator.js';
+import { assertStartupDependencies, logStartupTransition } from './startup-health-check.js';
 
 // Validate required environment variables
 function validateConfig() {
@@ -447,6 +448,32 @@ async function initializeRelayer() {
   
   // Validate configuration
   validateConfig();
+  logStartupTransition('config_validated');
+
+  // ── Startup dependency health checks ─────────────────────────────────────
+  //
+  // Before the relayer begins processing orders it must confirm that the
+  // coordinator (order-book service) and resolver registry are reachable.
+  // If dependencies are not ready the relayer retries with exponential
+  // back-off.  If max retries are exceeded it exits with a clear error.
+  logStartupTransition('deps_checking', {
+    coordinatorUrl: process.env.COORDINATOR_URL ?? '(not set)',
+    resolverRegistryUrl: process.env.RESOLVER_REGISTRY_URL ?? '(not configured)',
+  });
+  await assertStartupDependencies({
+    coordinatorUrl: process.env.COORDINATOR_URL,
+    resolverRegistryUrl: process.env.RESOLVER_REGISTRY_URL,
+    maxRetries: process.env.RELAYER_STARTUP_MAX_RETRIES
+      ? parseInt(process.env.RELAYER_STARTUP_MAX_RETRIES, 10)
+      : undefined,
+    backoffBaseMs: process.env.RELAYER_STARTUP_BACKOFF_BASE_MS
+      ? parseInt(process.env.RELAYER_STARTUP_BACKOFF_BASE_MS, 10)
+      : undefined,
+    backoffMaxMs: process.env.RELAYER_STARTUP_BACKOFF_MAX_MS
+      ? parseInt(process.env.RELAYER_STARTUP_BACKOFF_MAX_MS, 10)
+      : undefined,
+  });
+  logStartupTransition('deps_ready');
 
   // Detect Solana placeholder mode and expose as a metric so operators see
   // an explicit warning when Solana settlement is not yet configured.
@@ -2606,8 +2633,9 @@ async function initializeRelayer() {
 
   console.log('≡ƒôì DEBUG: Orders endpoints registered successfully');
 
-  // Phase 6.5: EscrowFactory Event Listening (lazy ΓÇö first swap order only)
+  // Phase 6.5: EscrowFactory Event Listening (lazy — first swap order only)
   startChainMonitoring = async () => {
+  logStartupTransition('listeners_starting', { trigger: 'first_swap_order' });
   console.log('≡ƒöù Chain monitoring starting (swap order in flight)...');
   
   // Setup EscrowFactory contract instance for event listening
@@ -3295,6 +3323,7 @@ async function initializeRelayer() {
     console.log(`≡ƒîÉ HTTP server started on port ${RELAYER_CONFIG.port}`);
   });
   
+  logStartupTransition('ready', { port: RELAYER_CONFIG.port });
   console.log('Γ£à Relayer service initialized successfully');
   console.log('≡ƒÄ» Ready to process cross-chain swaps');
 }

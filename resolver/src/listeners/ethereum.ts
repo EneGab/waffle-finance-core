@@ -17,12 +17,40 @@ import {
 const CHAIN = "ethereum";
 
 /**
+ * Maximum number of event keys retained in the deduplication Set before it is
+ * pruned.  Events are emitted at most once per block and the resolver is
+ * observe-only, so a window of 10 000 keys is large enough to survive any
+ * realistic listener restart without growing without bound.
+ */
+const DEDUP_MAX_SIZE = 10_000;
+
+/**
+ * Build the deduplication key for an Ethereum HTLC event.
+ *
+ * We key on `txHash:eventType` because a single transaction can contain at
+ * most one event of each type for a given contract, so this is sufficient to
+ * deduplicate replayed events across listener restarts.
+ */
+function dedupKey(txHash: string, eventType: string): string {
+  return `${txHash}:${eventType}`;
+}
+
+/**
  * Stream HTLCEscrow events from the configured Ethereum chain.
  *
  * This listener only OBSERVES — it does not submit transactions. Acting
  * on observed events (e.g. claiming on the opposite chain when a
  * preimage is revealed) is the resolver runtime's job and lives outside
  * this listener so it can be tested independently.
+ *
+ * ## Deduplication
+ *
+ * `viem.watchEvent` may replay recently seen logs when the WebSocket
+ * reconnects or the listener is restarted by the Supervisor.  A
+ * `processedEvents` Set (keyed by `txHash:eventType`) guards every handler
+ * dispatch and silently drops duplicates after emitting a debug log.  The
+ * Set is bounded to `DEDUP_MAX_SIZE` entries; the oldest half is evicted
+ * when the limit is reached so memory stays bounded across long uptimes.
  */
 export class EthereumListener {
   private readonly client: PublicClient;
@@ -32,6 +60,13 @@ export class EthereumListener {
   private unwatchOrderClaimed?: () => void;
   private unwatchOrderRefunded?: () => void;
 
+  /**
+   * Cross-restart deduplication Set.  Lives on the instance so that it
+   * survives Supervisor-driven restarts (the Supervisor reuses the same
+   * listener instance on each restart attempt).
+   */
+  private readonly processedEvents = new Set<string>();
+
   constructor(cfg: ResolverConfig, log: Logger) {
     this.cfg = cfg;
     this.log = log.child({ component: "EthereumListener" });
@@ -40,6 +75,35 @@ export class EthereumListener {
       transport: http(cfg.ethereum.rpcUrl)
     });
   }
+
+  // ── Deduplication helpers ─────────────────────────────────────────────────
+
+  /**
+   * Returns true when the event has already been processed.
+   * Inserts the key into the Set when it is new.
+   * Evicts the oldest half of entries once the Set exceeds DEDUP_MAX_SIZE.
+   */
+  private isDuplicate(txHash: string, eventType: string): boolean {
+    const key = dedupKey(txHash, eventType);
+    if (this.processedEvents.has(key)) {
+      return true;
+    }
+    // Prune before inserting to keep the Set bounded.
+    if (this.processedEvents.size >= DEDUP_MAX_SIZE) {
+      const half = DEDUP_MAX_SIZE / 2;
+      let pruned = 0;
+      for (const k of this.processedEvents) {
+        this.processedEvents.delete(k);
+        pruned++;
+        if (pruned >= half) break;
+      }
+      this.log.debug({ pruned, remaining: this.processedEvents.size }, "pruned dedup Set");
+    }
+    this.processedEvents.add(key);
+    return false;
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   async start(handlers: EthereumEventHandlers): Promise<void> {
     if (!this.cfg.ethereum.htlcEscrow) {
@@ -67,7 +131,20 @@ export class EthereumListener {
       event: orderCreated,
       onLogs: (logs) => {
         for (const log of logs) {
-          eventsTotal.inc({ chain: CHAIN, event_type: "order_created" });
+          const txHash = log.transactionHash ?? "";
+          const eventType = "order_created";
+
+          // ── Deduplication guard ─────────────────────────────────────────
+          if (this.isDuplicate(txHash, eventType)) {
+            this.log.debug(
+              { txHash, orderId: String(log.args.orderId), eventType },
+              "duplicate Ethereum event dropped (already processed)"
+            );
+            listenerErrorsTotal.inc({ chain: CHAIN, error_type: "duplicate_event" });
+            continue;
+          }
+
+          eventsTotal.inc({ chain: CHAIN, event_type: eventType });
           listenerLastEventTimestampSeconds.set({ chain: CHAIN }, Math.floor(Date.now() / 1000));
           try {
             handlers.onOrderCreated({
@@ -95,7 +172,20 @@ export class EthereumListener {
       event: orderClaimed,
       onLogs: (logs) => {
         for (const log of logs) {
-          eventsTotal.inc({ chain: CHAIN, event_type: "order_claimed" });
+          const txHash = log.transactionHash ?? "";
+          const eventType = "order_claimed";
+
+          // ── Deduplication guard ─────────────────────────────────────────
+          if (this.isDuplicate(txHash, eventType)) {
+            this.log.debug(
+              { txHash, orderId: String(log.args.orderId), eventType },
+              "duplicate Ethereum event dropped (already processed)"
+            );
+            listenerErrorsTotal.inc({ chain: CHAIN, error_type: "duplicate_event" });
+            continue;
+          }
+
+          eventsTotal.inc({ chain: CHAIN, event_type: eventType });
           listenerLastEventTimestampSeconds.set({ chain: CHAIN }, Math.floor(Date.now() / 1000));
           try {
             handlers.onOrderClaimed({
@@ -118,7 +208,20 @@ export class EthereumListener {
       event: orderRefunded,
       onLogs: (logs) => {
         for (const log of logs) {
-          eventsTotal.inc({ chain: CHAIN, event_type: "order_refunded" });
+          const txHash = log.transactionHash ?? "";
+          const eventType = "order_refunded";
+
+          // ── Deduplication guard ─────────────────────────────────────────
+          if (this.isDuplicate(txHash, eventType)) {
+            this.log.debug(
+              { txHash, orderId: String(log.args.orderId), eventType },
+              "duplicate Ethereum event dropped (already processed)"
+            );
+            listenerErrorsTotal.inc({ chain: CHAIN, error_type: "duplicate_event" });
+            continue;
+          }
+
+          eventsTotal.inc({ chain: CHAIN, event_type: eventType });
           listenerLastEventTimestampSeconds.set({ chain: CHAIN }, Math.floor(Date.now() / 1000));
           try {
             handlers.onOrderRefunded({

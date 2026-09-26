@@ -1,3 +1,4 @@
+import type { Logger } from "pino";
 import type { Supervisor, SupervisorState } from "./supervisor.js";
 import {
   listenerLastEventTimestampSeconds,
@@ -15,10 +16,29 @@ import {
  * while this describes whether the resolver is actually fulfilling its
  * role from an operator's point of view.
  *
- * - `connected` — running, all chains reporting recent events, no elevated failures.
- * - `degraded`  — running but actively retrying/restarting through transient errors.
- * - `stale`     — running, but one or more chains have gone quiet longer than expected.
- * - `inactive`  — not running at all (idle, stopping, stopped, or failed).
+ * ### State definitions and threshold criteria
+ *
+ * | State      | Criteria                                                                       |
+ * |------------|--------------------------------------------------------------------------------|
+ * | CONNECTED  | Supervisor is running, all monitored chains have emitted an event within       |
+ * |            | `staleAfterSeconds` (default 300 s), and recent failures are below the         |
+ * |            | `degradedFailureThreshold` (default 3).                                        |
+ * | DEGRADED   | Supervisor is running or actively restarting AND one of the following is true: |
+ * |            | (a) supervisor is in `restarting` state; OR                                    |
+ * |            | (b) `recentFailureCount >= degradedFailureThreshold`; OR                       |
+ * |            | (c) `consecutiveRpcErrors >= consecutiveRpcErrorThreshold` (default 3).        |
+ * | STALE      | Supervisor is running but one or more chains have not emitted an event for     |
+ * |            | longer than `staleAfterSeconds`. Chain is considered stale before degraded     |
+ * |            | because a quiet chain is a weaker operational signal than active failures.     |
+ * | INACTIVE   | Supervisor is in `idle`, `stopping`, `stopped`, or `failed` state — the       |
+ * |            | resolver is not performing any work at all.                                    |
+ *
+ * ### Precedence (strongest signal first)
+ * INACTIVE > DEGRADED > STALE > CONNECTED
+ *
+ * INACTIVE is the clearest problem (the process isn't running). DEGRADED
+ * (active failures/restarts) is stronger than STALE (just quiet) because a
+ * chain can be genuinely quiet without any fault.
  */
 export type ResolverTelemetryState = "connected" | "degraded" | "stale" | "inactive";
 
@@ -54,6 +74,7 @@ export interface ResolverTelemetrySnapshot {
   commandQueueDepth: number;
   recentFailureCount: number;
   recentRetryCount: number;
+  consecutiveRpcErrors: number;
   chains: ChainTelemetry[];
 }
 
@@ -69,8 +90,19 @@ export interface ComputeTelemetryInput {
   /** Retry attempts observed since the last telemetry collection. */
   recentRetryCount: number;
   commandQueueDepth: number;
-  /** recentFailureCount at or above this trips "degraded". */
+  /** recentFailureCount at or above this trips "degraded". Default: 3. */
   degradedFailureThreshold: number;
+  /**
+   * Number of consecutive RPC errors observed since the last successful
+   * poll.  At or above `consecutiveRpcErrorThreshold` the state is
+   * classified as "degraded" even when no chain has gone stale yet.
+   * Default: 0 (not tracked by callers that don't have this data).
+   */
+  consecutiveRpcErrors: number;
+  /**
+   * Threshold for `consecutiveRpcErrors` to trip "degraded". Default: 3.
+   */
+  consecutiveRpcErrorThreshold: number;
 }
 
 // ── Pure computation ──────────────────────────────────────────────────────────
@@ -80,11 +112,14 @@ export interface ComputeTelemetryInput {
  * (no clock reads, no metrics registry access) so state-transition logic can
  * be tested deterministically.
  *
- * Precedence when multiple conditions hold: inactive > stale > degraded >
- * connected. A resolver that isn't running at all is a stronger signal than
- * one that is running but has gone quiet, which is a stronger signal than one
- * that is actively retrying through transient errors while still making
- * progress.
+ * ### Precedence when multiple conditions hold:
+ * inactive > degraded > stale > connected
+ *
+ * A resolver that isn't running at all (INACTIVE) is the strongest signal.
+ * Active failures/restarts (DEGRADED) are stronger than a quiet chain (STALE)
+ * because degraded implies active problems even if events are still arriving.
+ * A resolver with no recent events but no active errors is STALE.
+ * Everything healthy is CONNECTED.
  */
 export function computeResolverTelemetry(input: ComputeTelemetryInput): ResolverTelemetrySnapshot {
   const {
@@ -97,6 +132,8 @@ export function computeResolverTelemetry(input: ComputeTelemetryInput): Resolver
     recentRetryCount,
     commandQueueDepth,
     degradedFailureThreshold,
+    consecutiveRpcErrors,
+    consecutiveRpcErrorThreshold,
   } = input;
 
   const chains: ChainTelemetry[] = chainLastEventSeconds.map(({ chain, lastEventSeconds }) => {
@@ -113,35 +150,67 @@ export function computeResolverTelemetry(input: ComputeTelemetryInput): Resolver
     commandQueueDepth,
     recentFailureCount,
     recentRetryCount,
+    consecutiveRpcErrors,
     chains,
   };
 
+  // ── INACTIVE: supervisor is not running ───────────────────────────────────
   if (INACTIVE_SUPERVISOR_STATES.includes(supervisorState)) {
-    return { ...base, state: "inactive", reason: `supervisor is ${supervisorState}` };
-  }
-
-  const staleChains = chains.filter((c) => !c.live);
-  if (staleChains.length > 0) {
     return {
       ...base,
-      state: "stale",
-      reason: `no recent events from: ${staleChains.map((c) => c.chain).join(", ")}`,
+      state: "inactive",
+      reason: `supervisor is ${supervisorState}`,
     };
   }
 
+  // ── DEGRADED: active failures or consecutive RPC errors ───────────────────
+  // Check degraded before stale: active errors are a stronger signal than
+  // a temporarily quiet chain.
   if (supervisorState === "restarting") {
-    return { ...base, state: "degraded", reason: `supervisor is restarting (restart ${restarts})` };
+    return {
+      ...base,
+      state: "degraded",
+      reason: `supervisor is restarting (restart ${restarts})`,
+    };
   }
 
   if (recentFailureCount >= degradedFailureThreshold) {
     return {
       ...base,
       state: "degraded",
-      reason: `elevated failure count since last check (${recentFailureCount})`,
+      reason: `elevated failure count since last check (${recentFailureCount} >= threshold ${degradedFailureThreshold})`,
     };
   }
 
-  return { ...base, state: "connected", reason: "all chains live, no elevated failures" };
+  if (consecutiveRpcErrors >= consecutiveRpcErrorThreshold) {
+    return {
+      ...base,
+      state: "degraded",
+      reason: `consecutive RPC errors (${consecutiveRpcErrors} >= threshold ${consecutiveRpcErrorThreshold})`,
+    };
+  }
+
+  // ── STALE: chain(s) have gone quiet ───────────────────────────────────────
+  const staleChains = chains.filter((c) => !c.live);
+  if (staleChains.length > 0) {
+    const details = staleChains.map((c) =>
+      c.secondsSinceLastEvent !== null
+        ? `${c.chain} (${c.secondsSinceLastEvent}s ago, threshold ${staleAfterSeconds}s)`
+        : `${c.chain} (no events yet)`
+    );
+    return {
+      ...base,
+      state: "stale",
+      reason: `no recent events from: ${details.join("; ")}`,
+    };
+  }
+
+  // ── CONNECTED: all checks pass ────────────────────────────────────────────
+  return {
+    ...base,
+    state: "connected",
+    reason: "all chains live, no elevated failures or RPC errors",
+  };
 }
 
 // ── Metrics-backed collection ─────────────────────────────────────────────────
@@ -154,6 +223,10 @@ export interface CollectTelemetryDeps {
   staleAfterSeconds?: number;
   /** Defaults to 3. */
   degradedFailureThreshold?: number;
+  /** Defaults to 3. */
+  consecutiveRpcErrorThreshold?: number;
+  /** Optional logger for state-transition log lines. */
+  log?: Logger;
 }
 
 /**
@@ -161,14 +234,20 @@ export interface CollectTelemetryDeps {
  * `recentRetryCount` reflect activity since the *last* collection rather
  * than an ever-growing total that would eventually trip "degraded"
  * permanently on any long-lived process.
+ *
+ * Also tracks state transitions and emits log lines on every change so
+ * operators can see exactly when and why the resolver's liveness state
+ * changed without having to correlate metrics dashboards.
  */
 export class ResolverTelemetryCollector {
   private lastFailureTotal = 0;
   private lastRetryTotal = 0;
+  private lastState: ResolverTelemetryState | null = null;
 
   async collect(deps: CollectTelemetryDeps): Promise<ResolverTelemetrySnapshot> {
     const staleAfterSeconds = deps.staleAfterSeconds ?? 300;
     const degradedFailureThreshold = deps.degradedFailureThreshold ?? 3;
+    const consecutiveRpcErrorThreshold = deps.consecutiveRpcErrorThreshold ?? 3;
     const nowSeconds = Math.floor(Date.now() / 1000);
 
     const [lastEventMetric, failuresMetric, retriesMetric, activeOpsMetric] = await Promise.all([
@@ -202,12 +281,43 @@ export class ResolverTelemetryCollector {
       recentRetryCount,
       commandQueueDepth,
       degradedFailureThreshold,
+      // The metrics-backed collector does not currently track consecutive RPC
+      // errors independently (that would require a dedicated counter).  Pass 0
+      // so the threshold is never tripped from this path; callers that have
+      // access to per-chain error counts can use computeResolverTelemetry()
+      // directly with the real value.
+      consecutiveRpcErrors: 0,
+      consecutiveRpcErrorThreshold,
     });
 
     publishResolverTelemetryMetric(snapshot.state);
+
+    // ── State-transition logging ──────────────────────────────────────────
+    if (snapshot.state !== this.lastState) {
+      if (deps.log) {
+        const level = stateLogLevel(snapshot.state);
+        deps.log[level](
+          {
+            previousState: this.lastState ?? "unknown",
+            newState: snapshot.state,
+            reason: snapshot.reason,
+            supervisorState: snapshot.supervisorState,
+            restarts: snapshot.restarts,
+            recentFailureCount: snapshot.recentFailureCount,
+            consecutiveRpcErrors: snapshot.consecutiveRpcErrors,
+            chains: snapshot.chains,
+          },
+          `resolver liveness state transition: ${this.lastState ?? "unknown"} → ${snapshot.state}`,
+        );
+      }
+      this.lastState = snapshot.state;
+    }
+
     return snapshot;
   }
 }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function sumValues(values: Array<{ value: number }>): number {
   return values.reduce((sum, v) => sum + v.value, 0);
@@ -217,5 +327,26 @@ function sumValues(values: Array<{ value: number }>): number {
 function publishResolverTelemetryMetric(state: ResolverTelemetryState): void {
   for (const candidate of RESOLVER_TELEMETRY_STATES) {
     resolverRuntimeStateInfo.set({ state: candidate }, candidate === state ? 1 : 0);
+  }
+}
+
+/**
+ * Map a telemetry state to the appropriate log level.
+ *
+ * - CONNECTED  → info  (normal operation, worth noting on first transition)
+ * - STALE      → warn  (chain has gone quiet; investigate but not urgent)
+ * - DEGRADED   → warn  (active errors or restarts; needs attention)
+ * - INACTIVE   → error (resolver has stopped entirely)
+ */
+function stateLogLevel(state: ResolverTelemetryState): "info" | "warn" | "error" {
+  switch (state) {
+    case "connected":
+      return "info";
+    case "stale":
+      return "warn";
+    case "degraded":
+      return "warn";
+    case "inactive":
+      return "error";
   }
 }
