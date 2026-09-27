@@ -99,13 +99,51 @@ export class PostgresDatabase {
   getPool(): Pool {
     return this.pool;
   }
+
+  /**
+   * Run `fn` inside a real `BEGIN` … `COMMIT` block on a single pooled
+   * connection, rolling back on any throw.
+   *
+   * The callback is handed a `PostgresDatabase` whose statements are bound to
+   * that one client, so every statement it issues joins the same transaction.
+   * This is what makes a multi-statement repository write atomic; without it a
+   * crash between an `orders` UPDATE and its `order_events` INSERT leaves the
+   * order advanced with no history row.
+   */
+  async transaction<T>(fn: (db: PostgresDatabase) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    const scoped = new PostgresDatabase(client as unknown as Pool);
+    try {
+      await client.query("BEGIN");
+      const result = await fn(scoped);
+      await client.query("COMMIT");
+      return result;
+    } catch (err) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // The connection is already broken; the pool will discard it. Surface
+        // the original failure rather than the rollback failure.
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 /**
  * PostgreSQL statement wrapper that provides a SQLite-like interface.
+ *
+ * Accepts either a `Pool` (statements run on whichever connection the pool
+ * hands out) or a checked-out `PoolClient` (statements join that client's
+ * current transaction).  Only `.query()` is used, which both satisfy.
  */
 export class PostgresStatement {
-  constructor(private pool: Pool, private sql: string) {}
+  constructor(
+    private executor: Pick<Pool, "query">,
+    private sql: string
+  ) {}
 
   private convertSqliteToPostgres(sql: string, params: any[]): { sql: string; params: any[] } {
     // Convert strftime expressions first.
@@ -175,19 +213,19 @@ export class PostgresStatement {
 
   async runAsync(...params: any[]): Promise<{ changes: number; lastInsertRowid: number }> {
     const { sql, params: convertedParams } = this.convertSqliteToPostgres(this.sql, params);
-    const result = await this.pool.query(sql, convertedParams);
+    const result = await this.executor.query(sql, convertedParams);
     return { changes: result.rowCount ?? 0, lastInsertRowid: 0 };
   }
 
   async getAsync(...params: any[]): Promise<any> {
     const { sql, params: convertedParams } = this.convertSqliteToPostgres(this.sql, params);
-    const result = await this.pool.query(sql, convertedParams);
+    const result = await this.executor.query(sql, convertedParams);
     return result.rows[0] ?? null;
   }
 
   async allAsync(...params: any[]): Promise<any[]> {
     const { sql, params: convertedParams } = this.convertSqliteToPostgres(this.sql, params);
-    const result = await this.pool.query(sql, convertedParams);
+    const result = await this.executor.query(sql, convertedParams);
     return result.rows;
   }
 }
@@ -214,7 +252,7 @@ export class PostgresStatement {
  * added.  Startup validation compares the database's highest recorded
  * migration against this constant and aborts if they differ.
  */
-export const CURRENT_SCHEMA_VERSION = "012_order_cancellation.sql";
+export const CURRENT_SCHEMA_VERSION = "013_replay_safety.sql";
 
 /**
  * Canonical SQLite migration sequence, in application order.
@@ -239,6 +277,7 @@ export const SQLITE_MIGRATIONS = [
   "010_soroban_checkpoints.sql",
   "011_order_ledger_cursors.sql",
   "012_order_cancellation.sql",
+  "013_replay_safety.sql",
 ] as const;
 
 /**
@@ -263,6 +302,7 @@ export const POSTGRES_MIGRATION_FILES = [
   "010_soroban_checkpoints_postgres.sql",
   "011_order_ledger_cursors_postgres.sql",
   "012_order_cancellation_postgres.sql",
+  "013_replay_safety_postgres.sql",
 ] as const;
 
 // ── Public helpers ────────────────────────────────────────────────────────────

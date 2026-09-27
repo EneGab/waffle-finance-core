@@ -77,6 +77,7 @@ function _directionCounts(direction: string): Record<string, number> {
   return out;
 }
 
+/**
  * Record lifecycle transition metrics for an order moving from one state
  * to another.  Updates:
  *  - `orderLifecycleTransitions` counter (direction, from, to)
@@ -577,6 +578,23 @@ export class OrderService {
 
   async getLastProcessedBlock(chain: Chain): Promise<number> {
     return this.repo.getLastProcessedBlock(chain);
+  }
+
+  /**
+   * #734: claim an event's idempotence key in the durable ledger.
+   *
+   * Returns true when the caller owns the event and should apply it; false when
+   * a previous reconciler run already claimed it.  Unlike the reconciler's
+   * in-memory `EventSeenSet`, this survives a restart, which is what makes a
+   * repeated replay of the same event sequence a storage-layer no-op.
+   */
+  async claimEvent(input: {
+    eventKey: string;
+    chain: "ethereum" | "soroban" | "solana";
+    eventType: "OrderCreated" | "OrderClaimed" | "OrderRefunded";
+    orderId?: number | null;
+  }): Promise<boolean> {
+    return this.repo.claimEvent(input);
   }
 
   async getChainCursor(chain: Chain): Promise<number> {

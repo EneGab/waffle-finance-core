@@ -838,6 +838,9 @@ export const orderPhaseRatio = new Gauge({
   name: 'coordinator_order_phase_ratio',
   help: 'Fraction of active (non-terminal) orders currently in each phase, by direction (0–1)',
   labelNames: ['direction', 'phase'] as const,
+  registers: [registry],
+});
+
 // ── Reconciliation replay / recovery metrics ─────────────────────────────────
 // These metrics expose the internals of the formal replay pipeline so operators
 // can detect silent event loss, cursor staleness, and forced re-syncs without
@@ -878,6 +881,10 @@ export const orderPhaseDwellSeconds = new Histogram({
   // Buckets cover 5 s → 2 h, with fine resolution in the 30 s–15 min window
   // where most healthy swaps complete, and coarse resolution beyond that.
   buckets: [5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200],
+  registers: [registry],
+});
+
+/**
  * Cursor lag per chain: the distance between the cursor HWM and the current
  * chain tip in chain-native units.  Identical to `reconciliationWindowSize`
  * today but kept as a separate metric so dashboards can alert on lag vs window
@@ -907,6 +914,37 @@ export const orderPhaseTransitionSeconds = new Histogram({
   help: 'Wall-clock seconds between consecutive phase milestones (e.g. src_locked→dst_locked), by direction',
   labelNames: ['direction', 'transition'] as const,
   buckets: [5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200],
+  registers: [registry],
+});
+
+/**
+ * Number of active (non-terminal) orders currently sitting in each phase, by
+ * direction.  Unlike `coordinator_order_phase_ratio` (a normalised 0–1 share)
+ * this is the absolute backlog count, so a rising value is directly actionable
+ * for capacity planning on the resolver and listener side.
+ */
+export const orderPhaseBacklogCount = new Gauge({
+  name: 'coordinator_order_phase_backlog',
+  help: 'Active (non-terminal) orders currently in each phase, by direction',
+  labelNames: ['direction', 'phase'] as const,
+  registers: [registry],
+});
+
+/**
+ * Age of the oldest active order in each phase, in seconds.
+ *
+ * A phase whose max-stuck age keeps growing means no order is progressing out
+ * of that phase — the earliest signal that a chain listener or the resolver is
+ * wedged, well before any of the per-transition histograms trip.
+ */
+export const orderPhaseMaxStuckAgeSeconds = new Gauge({
+  name: 'coordinator_order_phase_max_stuck_age_seconds',
+  help: 'Seconds since the last observed transition into each phase, by direction',
+  labelNames: ['direction', 'phase'] as const,
+  registers: [registry],
+});
+
+/**
  * Cumulative count of times the configured lookback window was exceeded,
  * forcing the reconciler to fall back to `tip - lookback` as the start block.
  * A non-zero rate means events before the fallback point may have been missed.
@@ -1019,6 +1057,8 @@ export const phaseDistributionMetrics = {
   phaseBacklog: orderPhaseBacklogCount,
   phaseMaxStuckAge: orderPhaseMaxStuckAgeSeconds,
 } as const;
+
+/**
  * Per-chain errors during a reconciler run.  Incremented when a single
  * chain's RPC call fails and that chain is skipped for the run.  A non-zero
  * rate for a chain means its cursor is not advancing and the window is growing.

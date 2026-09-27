@@ -242,6 +242,34 @@ export class Reconciler {
     );
   }
 
+  /**
+   * #734: claim an event's idempotence key in the durable ledger before
+   * mutating anything.
+   *
+   * `seenSet.checkAndMark` is a per-run fast path only — it is cleared at the
+   * start of every run and lost entirely on restart, so a replayed window used
+   * to re-derive and re-apply every event it contained.  This claims the same
+   * key in the `processed_events` table, whose PRIMARY KEY is the actual
+   * uniqueness guarantee and does survive a restart.
+   *
+   * Returns true when the caller owns the event and should apply it; false when
+   * a previous run already claimed it, in which case the event must be skipped
+   * and the per-order cursor still advanced (the event *was* processed, just
+   * not by us).
+   */
+  private async claimEvent(
+    key: string,
+    chain: "ethereum" | "soroban" | "solana",
+    eventType: "OrderCreated" | "OrderClaimed" | "OrderRefunded"
+  ): Promise<boolean> {
+    const claimed = await this.orders.claimEvent({ eventKey: key, chain, eventType });
+    if (!claimed) {
+      reconciliationDuplicatesSkipped.inc();
+      this.log.debug({ key, chain, eventType }, "reconciler: event already processed in a previous run — skipping");
+    }
+    return claimed;
+  }
+
   // ─── Public API ──────────────────────────────────────────────────────────
 
   getStatus(): ReconciliationStatus {
@@ -508,6 +536,8 @@ export class Reconciler {
         continue;
       }
 
+      if (!(await this.claimEvent(key, "ethereum", "OrderCreated"))) continue;
+
       try {
         const order = await this.orders.findByHashlock(args.hashlock);
         if (!order) {
@@ -620,6 +650,8 @@ export class Reconciler {
       const conflict = this.seenSet.checkAndMark("ethereum", "OrderClaimed", key, semKey);
       if (conflict) continue;
 
+      if (!(await this.claimEvent(key, "ethereum", "OrderClaimed"))) continue;
+
       try {
         const order = await this.orders.findBySrcOrderId("ethereum", args.orderId.toString());
         if (!order) {
@@ -706,6 +738,8 @@ export class Reconciler {
 
       const conflict = this.seenSet.checkAndMark("ethereum", "OrderRefunded", key, semKey);
       if (conflict) continue;
+
+      if (!(await this.claimEvent(key, "ethereum", "OrderRefunded"))) continue;
 
       try {
         const order = await this.orders.findBySrcOrderId("ethereum", args.orderId.toString());
@@ -866,6 +900,8 @@ export class Reconciler {
       reconciliationDuplicatesSkipped.inc();
       return 0;
     }
+
+    if (!(await this.claimEvent(sorobanDedupKey, "soroban", sorobanEvType))) return 0;
 
     if (result.kind === "created") {
       try {
@@ -1117,6 +1153,8 @@ export class Reconciler {
       const conflict = this.seenSet.checkAndMark("solana", "OrderCreated", key, semKey);
       if (conflict) return 0;
 
+      if (!(await this.claimEvent(key, "solana", "OrderCreated"))) return 0;
+
       try {
         const order = await this.orders.findByHashlock(hashlock);
         if (!order) {
@@ -1167,6 +1205,8 @@ export class Reconciler {
       const semKey = semanticKey("solana", "OrderClaimed", orderId);
       const conflict = this.seenSet.checkAndMark("solana", "OrderClaimed", key, semKey);
       if (conflict) return 0;
+
+      if (!(await this.claimEvent(key, "solana", "OrderClaimed"))) return 0;
 
       try {
         const order = await this.orders.findBySrcOrderId("solana", orderId);
@@ -1222,6 +1262,8 @@ export class Reconciler {
       const semKey = semanticKey("solana", "OrderRefunded", orderId);
       const conflict = this.seenSet.checkAndMark("solana", "OrderRefunded", key, semKey);
       if (conflict) return 0;
+
+      if (!(await this.claimEvent(key, "solana", "OrderRefunded"))) return 0;
 
       try {
         const order = await this.orders.findBySrcOrderId("solana", orderId);
