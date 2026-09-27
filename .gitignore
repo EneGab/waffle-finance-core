@@ -206,4 +206,6 @@ docker-compose.override.yml
 # Misc
 AGENTS.md
 .kilocode/
+# PR documentation
+*.pr.md
  
