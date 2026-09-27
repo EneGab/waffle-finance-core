@@ -87,6 +87,14 @@
       "types": "./dist/solana/idl/htlc.d.ts",
       "import": "./dist/solana/idl/htlc.js"
     },
+    "./fixtures": {
+      "types": "./dist/fixtures/index.d.ts",
+      "import": "./dist/fixtures/index.js"
+    },
+    "./guards": {
+      "types": "./dist/guards/index.d.ts",
+      "import": "./dist/guards/index.js"
+    },
     "./shared-utils": {
       "types": "./dist/shared-utils/index.d.ts",
       "import": "./dist/shared-utils/index.js"

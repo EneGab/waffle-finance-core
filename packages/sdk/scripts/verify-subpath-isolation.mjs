@@ -83,6 +83,18 @@ const KNOWN_COUPLINGS = {
   './secrets': {
     ethereum: 'secrets uses viem for keccak256; node:crypto has sha256 only',
   },
+  // `fixtures` is the cross-chain test-benchmark module for #732: a fixture
+  // that only described Ethereum would not be a benchmark for an
+  // ETH<->XLM<->SOL bridge. It imports the per-chain encoders it feeds
+  // (keccak256 from viem, StrKey from the Stellar SDK, the Anchor IDL and
+  // the Solana deserialiser), so a multi-chain entry necessarily reaches all
+  // three chain SDKs. Consumers should import the chain-specific runtime
+  // subpaths, never this one, so nothing client-facing depends on it.
+  './fixtures': {
+    ethereum: 'fixtures encodes EVM addresses/hashes with keccak256 via viem',
+    soroban: 'fixtures encodes Stellar StrKeys via @stellar/stellar-sdk',
+    solana: 'fixtures builds Anchor buffers via the Solana IDL and deserialiser',
+  },
 };
 
 /** Couplings acknowledged above, matched by the offending chain. */
