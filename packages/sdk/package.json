@@ -43,6 +43,10 @@
       "import": "./dist/routes/index.js",
       "types": "./dist/routes/index.d.ts"
     },
+    "./config-validation": {
+      "import": "./dist/config-validation.js",
+      "types": "./dist/config-validation.d.ts"
+    },
     "./htlc-client": {
       "import": "./dist/htlc-client.js",
       "types": "./dist/htlc-client.d.ts"

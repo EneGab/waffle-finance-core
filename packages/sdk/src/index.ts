@@ -11,6 +11,23 @@ export type {
   ExternalBridgeAdapter,
 } from "./types/index.js";
 
+// SDK runtime configuration validation
+export {
+  SdkConfigurationError,
+  validateRpcUrl,
+  validateChainId,
+  validateEthereumAddress,
+  validateSolanaAddress as validateSolanaConfigAddress,
+  validateSorobanAddress,
+  validateNetworkPassphrase,
+  validateChainPair,
+} from "./config-validation.js";
+export type {
+  SdkConfigIssue,
+  SdkConfigIssueCode,
+  ChainPairValidationInput,
+} from "./config-validation.js";
+
 // Route-identity registry — single source of truth for supported routes
 export {
   // axes
@@ -107,8 +124,11 @@ export {
   resolveSolanaAsset,
   resolveEthereumTokenFromSolana,
   normalizeEthereumAddress,
+  assertCanonicalEthereumAddress,
   normalizeStellarAssetKey,
+  assertCanonicalStellarAssetKey,
   normalizeSolanaMint,
+  assertCanonicalSolanaMint,
   isSupportedEthToStellar,
   isSupportedStellarToEth,
   isSupportedEthToSolana,
@@ -130,6 +150,7 @@ export {
   getSupportedSolanaToStellar,
   toCanonicalId,
   UnsupportedAssetError,
+  InvalidAssetIdentifierError,
   type AssetMappingNetwork,
   type CanonicalStellarAsset,
   type CanonicalSolanaAsset,

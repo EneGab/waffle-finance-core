@@ -96,6 +96,8 @@ const ORDER_STATUS_TO_DISPLAY: Record<OrderStatus, DisplayStatus> = {
   failed: "failed",
   refunded: "refunded",
   expired: "timed_out",
+  cancelled: "refunded",
+  abandoned: "failed",
 };
 
 export function displayStatusFor(orderStatus: OrderStatus): DisplayStatus {
