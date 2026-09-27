@@ -83,6 +83,43 @@ export const startTimeSeconds = new Gauge({
   registers: [registry],
 });
 
+// ── Lifecycle metrics ─────────────────────────────────────────────────────────
+
+/**
+ * Enum-style gauge: exactly one `state` series is 1 at a time, all other
+ * states are 0. States: idle, starting, running, pausing, paused,
+ * restarting, stopping, stopped, failed.
+ */
+export const lifecycleStateGauge = new Gauge({
+  name: "resolver_lifecycle_state",
+  help: "Resolver lifecycle state (1 = current state, 0 = other states)",
+  labelNames: ["state"] as const,
+  registers: [registry],
+});
+
+/**
+ * Counter for lifecycle state transitions.
+ * Labels: `from`, `to` (state names).
+ */
+export const lifecycleTransitionsTotal = new Counter({
+  name: "resolver_lifecycle_transitions_total",
+  help: "Total lifecycle state transitions, labeled by from and to states",
+  labelNames: ["from", "to"] as const,
+  registers: [registry],
+});
+
+/**
+ * Histogram for time spent in each lifecycle state.
+ * Labels: `state`.
+ */
+export const lifecycleDurationSeconds = new Histogram({
+  name: "resolver_lifecycle_duration_seconds",
+  help: "Time spent in each lifecycle state in seconds",
+  labelNames: ["state"] as const,
+  buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 300, 900],
+  registers: [registry],
+});
+
 // ── Order operation metrics ───────────────────────────────────────────────────
 
 export const ordersProcessedTotal = new Counter({

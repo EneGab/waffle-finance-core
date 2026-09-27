@@ -6,6 +6,7 @@ import {
 } from "@wafflefinance/config";
 import type { ResolverConfig } from "./config.js";
 import type { Supervisor } from "./supervisor.js";
+import type { ResolverLifecycle } from "./lifecycle.js";
 import { buildSupportPolicy } from "./support.js";
 import { ResolverTelemetryCollector } from "./telemetry.js";
 
@@ -14,6 +15,7 @@ import { ResolverTelemetryCollector } from "./telemetry.js";
 export interface ResolverHealthDeps {
   cfg: ResolverConfig;
   supervisor: Supervisor;
+  lifecycle?: ResolverLifecycle;
   startedAt?: number;
   /**
    * The runtime's declared capabilities.  Defaults to the policy derived from
@@ -65,13 +67,17 @@ function readinessChecks(deps: ResolverHealthDeps, policy: SupportPolicy) {
   // error.  Stopping due to a signal is a deliberate action and is reported
   // as ok=true with detail="stopping" so orchestration systems don't
   // immediately restart the pod before teardown completes.
+  // Use lifecycle if available, otherwise fall back to supervisor state
+  const lifecycleState = deps.lifecycle?.state;
   const supervisorState = supervisor.state;
+  const effectiveState = lifecycleState ?? supervisorState;
+
   const supervisorOk =
-    supervisorState === "idle" ||
-    supervisorState === "running" ||
-    supervisorState === "restarting" ||
-    supervisorState === "stopping" ||
-    supervisorState === "stopped";
+    effectiveState === "idle" ||
+    effectiveState === "running" ||
+    effectiveState === "restarting" ||
+    effectiveState === "stopping" ||
+    effectiveState === "stopped";
 
   const checks = [
     {
@@ -176,21 +182,24 @@ export function createResolverHealthServer(deps: ResolverHealthDeps): Server {
     // Kubernetes probes directly (too verbose for high-frequency polling).
     if (req.url === "/health") {
       const checks = readinessChecks(deps, policy);
-      const state = deps.supervisor.state;
+      const lifecycleState = deps.lifecycle?.state;
+      const supervisorState = supervisor.state;
+      const effectiveState = lifecycleState ?? supervisorState;
       const dependencyFailures = checks.filter((c) => !c.ok);
 
       const overallStatus =
-        state === "failed"
+        effectiveState === "failed"
           ? "unhealthy"
-          : state === "stopping" || state === "stopped"
+          : effectiveState === "stopping" || effectiveState === "stopped"
             ? "stopping"
             : dependencyFailures.length > 0
               ? "degraded"
               : "healthy";
 
-      json(res, state === "failed" ? 503 : 200, {
+      json(res, effectiveState === "failed" ? 503 : 200, {
         status: overallStatus,
-        supervisorState: state,
+        lifecycleState: effectiveState,
+        supervisorState: supervisorState,
         restarts: deps.supervisor.restarts,
         ...servicePayload(startedAt),
         checks,
