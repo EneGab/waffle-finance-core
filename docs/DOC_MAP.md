@@ -103,7 +103,7 @@ If you add a new document, add a row here in the same PR.
 | `packages/sdk/README.md` | current | Engineering | SDK usage, subpath exports, build |
 | `packages/sdk/ASSET_MAPPING_CONTRACT.md` | current | Engineering | Asset mapping contract between SDK and chain clients |
 | `packages/sdk/ROUTE_REGISTRY.md` | current | Engineering | Route registry spec |
-| `packages/sdk/TREE_SHAKING.md` | current | Engineering | SDK bundle size and tree-shaking guidance |
+| `packages/sdk/TREE_SHAKING.md` | current | Engineering | SDK intended package shape, per-entry import cost, subpath isolation (#731) |
 | `soroban/README.md` | current | Engineering | Soroban contracts: build, test, deploy, TS bindings |
 | `soroban/docs/` | current | Engineering | Soroban-specific design docs |
 | `docs/SOROBAN_OPERATOR_GUIDE.md` | current | Operations | Soroban trust model, lifecycle, readiness checks, RPC degradation, recovery |

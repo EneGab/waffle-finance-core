@@ -87,6 +87,13 @@ const STATUS_DISPLAY: Record<DisplayStatus, StatusDisplay> = {
   },
 };
 
+// `cancelled` and `abandoned` are terminal void states with no success copy.
+// They are surfaced as `failed` (tone: `error`) rather than left unmapped:
+// this record is typed as a total `Record<OrderStatus, DisplayStatus>`, and a
+// gap here made `displayStatusFor("cancelled")` return `undefined` and
+// `describeOrderStatus("cancelled")` throw. #731: the module had no `exports`
+// subpath and was unreachable from any entry point, so no consumer could have
+// depended on the previous `undefined`.
 const ORDER_STATUS_TO_DISPLAY: Record<OrderStatus, DisplayStatus> = {
   announced: "pending",
   src_locked: "pending",
@@ -96,6 +103,8 @@ const ORDER_STATUS_TO_DISPLAY: Record<OrderStatus, DisplayStatus> = {
   failed: "failed",
   refunded: "refunded",
   expired: "timed_out",
+  cancelled: "failed",
+  abandoned: "failed",
 };
 
 export function displayStatusFor(orderStatus: OrderStatus): DisplayStatus {
