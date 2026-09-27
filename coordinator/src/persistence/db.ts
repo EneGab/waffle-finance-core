@@ -214,7 +214,7 @@ export class PostgresStatement {
  * added.  Startup validation compares the database's highest recorded
  * migration against this constant and aborts if they differ.
  */
-export const CURRENT_SCHEMA_VERSION = "012_order_cancellation.sql";
+export const CURRENT_SCHEMA_VERSION = "013_backlog_indexes.sql";
 
 /**
  * Canonical SQLite migration sequence, in application order.
@@ -239,6 +239,7 @@ export const SQLITE_MIGRATIONS = [
   "010_soroban_checkpoints.sql",
   "011_order_ledger_cursors.sql",
   "012_order_cancellation.sql",
+  "013_backlog_indexes.sql",
 ] as const;
 
 /**
@@ -263,6 +264,7 @@ export const POSTGRES_MIGRATION_FILES = [
   "010_soroban_checkpoints_postgres.sql",
   "011_order_ledger_cursors_postgres.sql",
   "012_order_cancellation_postgres.sql",
+  "013_backlog_indexes_postgres.sql",
 ] as const;
 
 // ── Public helpers ────────────────────────────────────────────────────────────

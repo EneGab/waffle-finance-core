@@ -28,6 +28,7 @@
 import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { getMonitor } from '../services/monitoring.js';
+import { getCoordinatorClient } from '../services/coordinator-client.js';
 
 // ---------------------------------------------------------------------------
 // Config accessor — reads RPC URLs directly from environment variables so
@@ -352,6 +353,23 @@ async function buildReadinessChecks(): Promise<ReadinessCheck[]> {
       latencyMs: result.latencyMs,
     });
   }
+
+  // ── Coordinator availability (#754) ──────────────────────────────────────
+  // Probe the coordinator and reflect availability in readiness so orchestrators
+  // stop routing traffic when the coordinator is unreachable.
+  const coordinatorClient = getCoordinatorClient();
+  const coordinatorOk = await coordinatorClient.probe();
+  const coordinatorStaleness = coordinatorClient.getStalenessSeconds();
+  const coordinatorCheck: ReadinessCheck & { staleness_seconds?: number | null; safe_mode?: boolean } = {
+    name: 'coordinator',
+    ok: coordinatorOk,
+    detail: coordinatorOk
+      ? 'ok'
+      : (coordinatorClient.getSafeModeReason() ?? 'unreachable'),
+    ...(coordinatorStaleness !== null ? { staleness_seconds: coordinatorStaleness } : {}),
+    safe_mode: !coordinatorClient.isAvailable(),
+  };
+  checks.push(coordinatorCheck);
 
   return checks;
 }

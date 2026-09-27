@@ -1,6 +1,6 @@
 import type { Database } from "./db.js";
 import { canTransition, isTerminal } from "../state-machine/order-machine.js";
-import { dbQueryDuration, orderTransitionEventsTotal } from "../metrics.js";
+import { dbQueryDuration, orderTransitionEventsTotal, dbNamedQueryDuration } from "../metrics.js";
 import { InMemoryRepositoryTransaction, type RepositoryTransaction } from "./transaction-contract.js";
 
 type DatabaseT = Database;
@@ -217,9 +217,14 @@ export class OrdersRepository {
   private readonly rollbackSrc: Statement;
   private readonly rollbackDst: Statement;
   private readonly insertEvent: Statement;
+  // Pre-compiled statements for background-job hot paths.
+  // These go through the standard withMetrics wrapper so their cost appears in
+  // dbQueryDuration, and they are additionally timed by dbNamedQueryDuration.
+  private readonly findStaleAnnouncedStmt: Statement;
+  private readonly findExpiredCandidatesStmt: Statement;
+  private readonly findOrdersMissingSecretStmt: Statement;
 
-  constructor(private readonly db: DatabaseT, transactionManager?: RepositoryTransaction) {
-    this.transactionManager = transactionManager ?? new InMemoryRepositoryTransaction();
+  constructor(private readonly db: DatabaseT, transactionManager?: RepositoryTransaction) {    this.transactionManager = transactionManager ?? new InMemoryRepositoryTransaction();
     this.insertStmt = db.prepare(`
       INSERT INTO orders (
         public_id, direction, status, hashlock,
@@ -317,6 +322,30 @@ export class OrdersRepository {
     this.insertEvent = db.prepare(`
       INSERT INTO order_events (order_id, event_type, payload_json)
       VALUES (:orderId, :eventType, :payloadJson)
+    `);
+    // Pre-compile background-job query statements so they are tracked by
+    // dbQueryDuration (via this.all) and dbNamedQueryDuration.
+    this.findStaleAnnouncedStmt = db.prepare(`
+      SELECT * FROM orders
+      WHERE status = 'announced'
+        AND src_order_id IS NULL
+        AND archived_at IS NULL
+        AND created_at < ?
+    `);
+    this.findExpiredCandidatesStmt = db.prepare(`
+      SELECT * FROM orders
+      WHERE status IN ('src_locked', 'dst_locked')
+        AND (
+          (src_timelock IS NOT NULL AND src_timelock < :now)
+          OR
+          (dst_timelock IS NOT NULL AND dst_timelock < :now)
+        )
+    `);
+    this.findOrdersMissingSecretStmt = db.prepare(`
+      SELECT public_id, src_order_id, hashlock, status
+      FROM orders
+      WHERE status IN ('src_locked', 'dst_locked')
+        AND preimage IS NULL
     `);
   }
 
@@ -786,17 +815,13 @@ export class OrdersRepository {
    */
   async findStaleAnnounced(retentionWindowSeconds: number): Promise<OrderRow[]> {
     const cutoff = Math.floor(Date.now() / 1000) - retentionWindowSeconds;
-    const rows = await this.all<OrderDbRow>(
-      this.db.prepare(`
-        SELECT * FROM orders
-        WHERE status = 'announced'
-          AND src_order_id IS NULL
-          AND archived_at IS NULL
-          AND created_at < ?
-      `),
-      cutoff
-    );
-    return rows.map(rowToOrder);
+    const end = dbNamedQueryDuration.startTimer({ query_name: 'stale_announced' });
+    try {
+      const rows = await this.all<OrderDbRow>(this.findStaleAnnouncedStmt, cutoff);
+      return rows.map(rowToOrder);
+    } finally {
+      end();
+    }
   }
 
   /** Soft-delete a single order by stamping it with the current unix time. */
@@ -1162,19 +1187,13 @@ export class OrdersRepository {
    * orders are excluded because they cannot transition to `expired`.
    */
   async findExpiredCandidates(nowSeconds: number): Promise<OrderRow[]> {
-    const rows = await this.all<OrderDbRow>(
-      this.db.prepare(`
-        SELECT * FROM orders
-        WHERE status IN ('src_locked', 'dst_locked')
-          AND (
-            (src_timelock IS NOT NULL AND src_timelock < :now)
-            OR
-            (dst_timelock IS NOT NULL AND dst_timelock < :now)
-          )
-      `),
-      { now: nowSeconds }
-    );
-    return rows.map(rowToOrder);
+    const end = dbNamedQueryDuration.startTimer({ query_name: 'expired_candidates' });
+    try {
+      const rows = await this.all<OrderDbRow>(this.findExpiredCandidatesStmt, { now: nowSeconds });
+      return rows.map(rowToOrder);
+    } finally {
+      end();
+    }
   }
 
   /**
@@ -1184,25 +1203,23 @@ export class OrdersRepository {
   async findOrdersMissingSecret(): Promise<
     { publicId: string; srcOrderId: string | null; hashlock: string; status: string }[]
   > {
-    const rows = await this.all<{
-      public_id: string;
-      src_order_id: string | null;
-      hashlock: string;
-      status: string;
-    }>(
-      this.db.prepare(`
-        SELECT public_id, src_order_id, hashlock, status
-        FROM orders
-        WHERE status IN ('src_locked', 'dst_locked')
-          AND preimage IS NULL
-      `)
-    );
-    return rows.map((r) => ({
-      publicId: r.public_id,
-      srcOrderId: r.src_order_id,
-      hashlock: r.hashlock,
-      status: r.status,
-    }));
+    const end = dbNamedQueryDuration.startTimer({ query_name: 'missing_secret' });
+    try {
+      const rows = await this.all<{
+        public_id: string;
+        src_order_id: string | null;
+        hashlock: string;
+        status: string;
+      }>(this.findOrdersMissingSecretStmt);
+      return rows.map((r) => ({
+        publicId: r.public_id,
+        srcOrderId: r.src_order_id,
+        hashlock: r.hashlock,
+        status: r.status,
+      }));
+    } finally {
+      end();
+    }
   }
 
   // ── Per-order ledger cursors ──────────────────────────────────────────────

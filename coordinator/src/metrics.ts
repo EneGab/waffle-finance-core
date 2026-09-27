@@ -55,6 +55,26 @@ export const dbQueryDuration = new Histogram({
   registers: [registry],
 });
 
+/**
+ * Named-query duration histogram.
+ *
+ * Supplements `dbQueryDuration` (which only carries an `operation` label of
+ * `"run"`, `"get"`, or `"all"`) with per-query names so operators can isolate
+ * which background-job query is contributing to DB latency.
+ *
+ * Current query names:
+ *   stale_announced    — findStaleAnnounced (stale-cleanup background job)
+ *   expired_candidates — findExpiredCandidates (expiry-scan background job)
+ *   missing_secret     — findOrdersMissingSecret (secret-recovery background job)
+ */
+export const dbNamedQueryDuration = new Histogram({
+  name: 'coordinator_db_named_query_duration_seconds',
+  help: 'Duration of named DB queries in seconds',
+  labelNames: ['query_name'] as const,
+  buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+  registers: [registry],
+});
+
 /** Repository transaction retries by operation */
 export const repositoryTransactionRetries = new Counter({
   name: 'coordinator_repository_transaction_retries_total',

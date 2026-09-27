@@ -76,6 +76,7 @@ import {
   settlementRecoveryTotal,
   settlementStateGauge,
   settlementDurationSeconds,
+  settlementSuccessTotal,
 } from '../metrics.js';
 
 // ---------------------------------------------------------------------------
@@ -313,6 +314,7 @@ export class SettlementService {
         { direction, outcome: 'success' },
         (Date.now() - startedAt) / 1000,
       );
+      settlementSuccessTotal.inc({ direction });
       this._updateStateGauge();
 
       if (opts.contractKey) {

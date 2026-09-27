@@ -10,6 +10,7 @@ import { ActiveOrder } from './types.js';
 import { getCurrentTimestamp } from './utils.js';
 import { KeyedMutex } from '../utils/concurrency.js';
 import { getLogger } from '../logger.js';
+import { recoveryTimeSeconds, rpcErrorsTotal } from '../metrics.js';
 
 const log = getLogger().child({ service: 'recovery-service' });
 
@@ -258,6 +259,11 @@ export class RecoveryService extends EventEmitter {
       ).toString();
       this.stats.lastRecoveryAt = getCurrentTimestamp();
 
+      recoveryTimeSeconds.observe(
+        { recovery_type: recovery.type, outcome: 'success' },
+        getCurrentTimestamp() - recovery.createdAt
+      );
+
       log.info({ orderHash: recovery.orderHash, recoveryId }, '[recovery] recovery completed');
 
       this.eventManager.emitEvent(EventType.Recovery, recovery.orderHash, {
@@ -276,6 +282,11 @@ export class RecoveryService extends EventEmitter {
 
       this.stats.failedRecoveries++;
       this.stats.pendingRecoveries--;
+
+      recoveryTimeSeconds.observe(
+        { recovery_type: recovery.type, outcome: 'failure' },
+        getCurrentTimestamp() - recovery.createdAt
+      );
 
       this.eventManager.emitEvent(EventType.Recovery, recovery.orderHash, {
         recoveryId,
@@ -352,25 +363,45 @@ export class RecoveryService extends EventEmitter {
    */
   private async executeEthereumRefund(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.makingAmount, asset: order.order.makerAsset, chain: 'ethereum' }, '[recovery] executing eth refund');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'ethereum', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'ethereum' }, '[recovery] eth refund successful');
   }
 
   private async executeEthereumEmergencyRefund(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.makingAmount, chain: 'ethereum' }, '[recovery] executing eth emergency refund');
-    await new Promise(resolve => setTimeout(resolve, 500));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'ethereum', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'ethereum' }, '[recovery] eth emergency refund successful');
   }
 
   private async executePublicEthereumWithdrawal(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.makingAmount, chain: 'ethereum' }, '[recovery] executing eth public withdrawal');
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'ethereum', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'ethereum' }, '[recovery] eth public withdrawal successful');
   }
 
   private async executeForceEthereumRecovery(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.makingAmount, chain: 'ethereum' }, '[recovery] executing eth force recovery');
-    await new Promise(resolve => setTimeout(resolve, 800));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 800));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'ethereum', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'ethereum' }, '[recovery] eth force recovery successful');
   }
 
@@ -379,25 +410,45 @@ export class RecoveryService extends EventEmitter {
    */
   private async executeStellarRefund(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.takingAmount, asset: order.order.takerAsset, chain: 'stellar' }, '[recovery] executing stellar refund');
-    await new Promise(resolve => setTimeout(resolve, 1200));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1200));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'stellar', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'stellar' }, '[recovery] stellar refund successful');
   }
 
   private async executeStellarEmergencyRefund(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.takingAmount, chain: 'stellar' }, '[recovery] executing stellar emergency refund');
-    await new Promise(resolve => setTimeout(resolve, 600));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 600));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'stellar', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'stellar' }, '[recovery] stellar emergency refund successful');
   }
 
   private async executePublicStellarWithdrawal(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.takingAmount, chain: 'stellar' }, '[recovery] executing stellar public withdrawal');
-    await new Promise(resolve => setTimeout(resolve, 1100));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1100));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'stellar', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'stellar' }, '[recovery] stellar public withdrawal successful');
   }
 
   private async executeForceeStellarRecovery(order: ActiveOrder): Promise<void> {
     log.info({ orderHash: order.orderHash, amount: order.order.takingAmount, chain: 'stellar' }, '[recovery] executing stellar force recovery');
-    await new Promise(resolve => setTimeout(resolve, 900));
+    try {
+      await new Promise(resolve => setTimeout(resolve, 900));
+    } catch (err) {
+      rpcErrorsTotal.inc({ chain: 'stellar', error_type: 'rpc_error' });
+      throw err;
+    }
     log.info({ orderHash: order.orderHash, chain: 'stellar' }, '[recovery] stellar force recovery successful');
   }
 

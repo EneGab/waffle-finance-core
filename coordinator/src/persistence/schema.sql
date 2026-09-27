@@ -94,6 +94,14 @@ CREATE TABLE IF NOT EXISTS order_events (
 
 CREATE INDEX IF NOT EXISTS idx_order_events_order ON order_events (order_id, created_at);
 
+-- Indexes from migration 013_backlog_indexes (event-type replay + direction/status counts).
+CREATE INDEX IF NOT EXISTS idx_order_events_type_time
+  ON order_events (event_type, created_at ASC);
+
+CREATE INDEX IF NOT EXISTS idx_orders_direction_status
+  ON orders (direction, status)
+  WHERE archived_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS resolver_heartbeats (
     address     TEXT PRIMARY KEY,
     chain       TEXT NOT NULL CHECK (chain IN ('ethereum', 'stellar')),
