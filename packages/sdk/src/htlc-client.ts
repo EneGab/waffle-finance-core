@@ -46,6 +46,19 @@ export interface HTLCTxResult {
 
 // ── Error types ─────────────────────────────────────────────────────────────
 
+/**
+ * Submission metadata attached to HTLCErrors thrown by the Soroban
+ * orchestration layer. Absent for errors from other adapters.
+ */
+export interface HTLCSubmissionMeta {
+  /** Total number of submission attempts made before the error. */
+  attempts: number;
+  /** Base fees (stroops) used in each fee-bump attempt, in order. */
+  feeBumpHistory: number[];
+  /** Hash of the last submitted transaction, if any. */
+  lastHash?: string;
+}
+
 export type HTLCErrorCode =
   /** The signer/wallet rejected the transaction or is unavailable. */
   | "wallet_unavailable"
@@ -61,6 +74,24 @@ export type HTLCErrorCode =
   | "invalid_preimage"
   /** Client is in simulation/placeholder mode — no real on-chain call made. */
   | "simulation_mode"
+  /**
+   * ERC20 token allowance is below the order amount.
+   * Callers must call `token.approve(escrowAddress, amount)` before creating
+   * an ERC20 order. On Soroban and Solana this code is not used; the token
+   * model handles authorization differently.
+   */
+  | "insufficient_allowance"
+  /**
+   * The caller is not registered as an active resolver in the ResolverRegistry.
+   * Only relevant when the escrow contract has a non-zero resolver registry set.
+   * Callers must stake and register in the registry before creating orders.
+   */
+  | "resolver_not_authorised"
+  /**
+   * The safety deposit provided is below the contract's minimum.
+   * Increase `safetyDeposit` to at least `minSafetyDeposit`.
+   */
+  | "safety_deposit_too_small"
   /** Any other chain-level error. */
   | "chain_error";
 
@@ -78,18 +109,22 @@ export class HTLCError extends Error {
   public readonly retryable: boolean;
   /** Optional lower-level cause (chain SDK error, network error, etc.). */
   public readonly cause?: unknown;
+  /** Orchestration metadata — populated by the Soroban orchestration layer. */
+  public readonly submissionMeta?: HTLCSubmissionMeta;
 
   constructor(opts: {
     code: HTLCErrorCode;
     message: string;
     retryable?: boolean;
     cause?: unknown;
+    submissionMeta?: HTLCSubmissionMeta;
   }) {
     super(opts.message);
     this.name = "HTLCError";
     this.code = opts.code;
     this.retryable = opts.retryable ?? false;
     this.cause = opts.cause;
+    this.submissionMeta = opts.submissionMeta;
   }
 }
 

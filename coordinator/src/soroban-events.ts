@@ -62,8 +62,8 @@ export interface CreatedEvent {
   readonly kind: "created";
   /** Soroban numeric order id (u64 decoded as bigint). */
   readonly orderId: bigint;
-  /** 0x-prefixed 32-byte hex hashlock (sha256 of preimage). */
-  readonly hashlock: `0x${string}`;
+  /** 32-byte hex hashlock (sha256 of preimage). */
+  readonly hashlock: string;
   /** Absolute unix-second timelock. */
   readonly timelock: number;
   /** Stellar G-address of the order creator (resolver). */
@@ -82,10 +82,10 @@ export interface ClaimedEvent {
   readonly kind: "claimed";
   /** Soroban numeric order id. */
   readonly orderId: bigint;
-  /** 0x-prefixed 32-byte hex hashlock (from topics). */
-  readonly hashlock: `0x${string}`;
-  /** 0x-prefixed hex preimage (from data). */
-  readonly preimage: `0x${string}`;
+  /** 32-byte hex hashlock (from topics). */
+  readonly hashlock: string;
+  /** hex preimage (from data). */
+  readonly preimage: string;
   /** Stellar G-address of the beneficiary (from topics). */
   readonly beneficiary: string;
 }
@@ -96,8 +96,8 @@ export interface RefundedEvent {
   readonly kind: "refunded";
   /** Soroban numeric order id. */
   readonly orderId: bigint;
-  /** 0x-prefixed 32-byte hex hashlock (from topics). */
-  readonly hashlock: `0x${string}`;
+  /** 32-byte hex hashlock (from topics). */
+  readonly hashlock: string;
   /** Stellar G-address that received the refunded funds. */
   readonly refundAddress: string;
 }
@@ -139,8 +139,20 @@ function malformed(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-function bytesToHex(bytes: Uint8Array | Buffer): `0x${string}` {
-  return ("0x" + Buffer.from(bytes).toString("hex")) as `0x${string}`;
+/**
+ * Normalise a raw bytes or hex-string value to a lowercase hex string without
+ * a `0x` prefix.  Exported so callers (tests, tools) can reuse the same
+ * normalisation the decoder applies to hashlock and preimage fields.
+ */
+export function toHex(value: Uint8Array | Buffer | string): string {
+  if (typeof value === "string") {
+    const hex = value.replace(/^0x/i, "");
+    if (hex.length % 2 !== 0 || !/^[0-9a-f]*$/i.test(hex)) {
+      throw new Error("Invalid hex string");
+    }
+    return hex.toLowerCase();
+  }
+  return Buffer.from(value).toString("hex");
 }
 
 function isBytes(v: unknown): v is Uint8Array | Buffer {
@@ -232,7 +244,7 @@ export function decodeHtlcEvent(
       schemaVersion: HTLC_EVENT_SCHEMA_VERSION,
       kind: "created",
       orderId,
-      hashlock: bytesToHex(hashlockRaw as Uint8Array),
+      hashlock: toHex(hashlockRaw as Uint8Array),
       timelock: Number(timelock),
       sender,
       beneficiary,
@@ -270,6 +282,9 @@ export function decodeHtlcEvent(
     if (!isBytes(preimageRaw)) {
       return malformed(eventKind, "data_type_mismatch", "data[2] (preimage) is not Bytes");
     }
+    if ((preimageRaw as Uint8Array).length === 0) {
+      return malformed(eventKind, "data_type_mismatch", "data[2] (preimage) is zero-length; a valid HTLC preimage must be non-empty");
+    }
     if (typeof amount !== "bigint") {
       return malformed(eventKind, "data_type_mismatch", "data[3] (amount) is not bigint");
     }
@@ -280,8 +295,8 @@ export function decodeHtlcEvent(
       schemaVersion: HTLC_EVENT_SCHEMA_VERSION,
       kind: "claimed",
       orderId,
-      hashlock: bytesToHex(hashlockRaw as Uint8Array),
-      preimage: bytesToHex(preimageRaw as Uint8Array),
+      hashlock: toHex(hashlockRaw as Uint8Array),
+      preimage: toHex(preimageRaw as Uint8Array),
       beneficiary,
     };
   }
@@ -321,7 +336,7 @@ export function decodeHtlcEvent(
     schemaVersion: HTLC_EVENT_SCHEMA_VERSION,
     kind: "refunded",
     orderId,
-    hashlock: bytesToHex(hashlockRaw as Uint8Array),
+    hashlock: toHex(hashlockRaw as Uint8Array),
     refundAddress,
   };
 }

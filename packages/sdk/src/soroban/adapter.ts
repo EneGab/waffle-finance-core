@@ -7,15 +7,24 @@
  *
  * Error mapping
  * ─────────────
- * Soroban simulation/submit errors are caught and re-thrown as HTLCError
- * instances with stable machine-readable codes. The original error is
- * preserved in HTLCError.cause.
+ * Soroban orchestration errors are already HTLCError instances (thrown by the
+ * orchestration layer). Other errors are caught and re-thrown as HTLCError
+ * instances with stable machine-readable codes. The original error is preserved
+ * in HTLCError.cause, and submission metadata (attempts, fee-bump history) is
+ * available in HTLCError.submissionMeta for orchestrated calls.
+ *
+ * Orchestration configuration
+ * ───────────────────────────
+ * Pass an optional `OrchestrationConfig` as the second constructor argument to
+ * override retry count, polling interval, and fee-bump cap on a per-adapter
+ * basis. These values take precedence over any defaults baked into the client.
  */
 
 import {
   SorobanHTLCClient,
   type SorobanCreateOrderInput,
   type SorobanSigner,
+  type OrchestrationConfig,
 } from "./index.js";
 import {
   HTLCError,
@@ -25,29 +34,57 @@ import {
 } from "../htlc-client.js";
 
 // ── Error classification ─────────────────────────────────────────────────────
+// The orchestration layer already throws HTLCError for all orchestrated calls.
+// This classifier handles any residual non-orchestrated errors (e.g. getOrder,
+// construction-time failures) that slip through as plain Errors.
+//
+// Classifier order matters: more-specific patterns appear before catch-alls.
 
 function classifySorobanError(err: unknown): HTLCError {
+  if (err instanceof HTLCError) return err;
+
   const msg = err instanceof Error ? err.message : String(err);
   const lc = msg.toLowerCase();
 
-  if (lc.includes("simulation failed")) {
+  // Network / RPC connectivity failures — always retryable transient errors.
+  if (
+    lc.includes("timeout") ||
+    lc.includes("etimedout") ||
+    lc.includes("econnreset") ||
+    lc.includes("socket hang up") ||
+    lc.includes("network error") ||
+    lc.includes("connection refused") ||
+    lc.includes("econnrefused")
+  ) {
+    return new HTLCError({
+      code: "chain_error",
+      message: "Soroban RPC timeout or connectivity error: " + msg,
+      retryable: true,
+      cause: err,
+    });
+  }
+
+  // Soroban contract host errors (HostError, WasmVm, invoke failures).
+  // These indicate the contract itself rejected the invocation — not retryable.
+  if (
+    lc.includes("simulation failed") ||
+    lc.includes("simulation rejected") ||
+    lc.includes("host error") ||
+    lc.includes("wasm vm") ||
+    lc.includes("wasmvm") ||
+    lc.includes("invoke host") ||
+    lc.includes("hostenvcatch") ||
+    lc.includes("contracterror")
+  ) {
     return new HTLCError({
       code: "simulation_failed",
-      message: "Soroban simulation rejected the call: " + msg,
+      message: "Soroban simulation or contract host error: " + msg,
       retryable: false,
       cause: err,
     });
   }
 
-  if (lc.includes("submit failed") || lc.includes("error")) {
-    return new HTLCError({
-      code: "tx_rejected",
-      message: "Soroban transaction was rejected: " + msg,
-      retryable: lc.includes("timeout") || lc.includes("network"),
-      cause: err,
-    });
-  }
-
+  // Preimage / hashlock mismatch — logic error, never retryable.
   if (lc.includes("hashlock") || lc.includes("preimage")) {
     return new HTLCError({
       code: "invalid_preimage",
@@ -57,6 +94,7 @@ function classifySorobanError(err: unknown): HTLCError {
     });
   }
 
+  // Timelock not yet expired — caller must wait, never retryable immediately.
   if (lc.includes("timelock")) {
     return new HTLCError({
       code: "timelock_not_expired",
@@ -66,10 +104,68 @@ function classifySorobanError(err: unknown): HTLCError {
     });
   }
 
+  // Bad auth or mis-signed transaction — key mismatch, not retryable.
+  if (
+    lc.includes("bad auth") ||
+    lc.includes("tx_bad_auth") ||
+    lc.includes("txbadauth") ||
+    (lc.includes("signature") && lc.includes("invalid"))
+  ) {
+    return new HTLCError({
+      code: "tx_rejected",
+      message: "Soroban transaction rejected: bad auth or invalid signature. " +
+        "Verify the signing key matches the source account: " + msg,
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // Unknown method / function not found — likely a contract ID mismatch.
+  if (
+    lc.includes("function not found") ||
+    lc.includes("unknown method") ||
+    lc.includes("method not found") ||
+    lc.includes("no such method") ||
+    lc.includes("no such function")
+  ) {
+    return new HTLCError({
+      code: "tx_rejected",
+      message: "Soroban contract method not found — check the contract ID and ABI: " + msg,
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // Malformed XDR or data decode failures.
+  if (
+    lc.includes("xdr decode") ||
+    lc.includes("malformed") ||
+    (lc.includes("parse") && lc.includes("error")) ||
+    lc.includes("decode error")
+  ) {
+    return new HTLCError({
+      code: "tx_rejected",
+      message: "Soroban XDR decode or data malformed — check transaction construction: " + msg,
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // Explicit submission rejection codes.
+  if (lc.includes("submit failed") || lc.includes("tx_rejected")) {
+    return new HTLCError({
+      code: "tx_rejected",
+      message: "Soroban transaction was rejected by the network: " + msg,
+      retryable: false,
+      cause: err,
+    });
+  }
+
+  // Fallback: unknown Soroban or chain error.
   return new HTLCError({
     code: "chain_error",
     message: "Soroban chain error: " + msg,
-    retryable: lc.includes("timeout") || lc.includes("network"),
+    retryable: false,
     cause: err,
   });
 }
@@ -102,7 +198,11 @@ export type SorobanAdapterCreateInput = SorobanCreateOrderInput;
 export class SorobanHTLCAdapter
   implements IHTLCClient<SorobanAdapterCreateInput, SorobanSigner>
 {
-  constructor(private readonly client: SorobanHTLCClient) {}
+  constructor(
+    private readonly client: SorobanHTLCClient,
+    /** Optional per-adapter orchestration policy overrides. */
+    private readonly config?: OrchestrationConfig,
+  ) {}
 
   /**
    * Create a Soroban HTLC order.
@@ -116,14 +216,10 @@ export class SorobanHTLCAdapter
     signer: SorobanSigner
   ): Promise<HTLCCreateResult> {
     try {
-      const txHash = await this.client.createOrder(input, signer);
-      // Soroban does not return a discrete orderId from createOrder — the
-      // canonical reference is the transaction hash. We encode a reference
-      // that claimOrder/refundOrder can decode.
+      const txHash = await this.client.createOrder(input, signer, this.config);
       const orderId = encodeSorobanOrderRef(input.sender, txHash);
       return { txId: txHash, orderId };
     } catch (err) {
-      if (err instanceof HTLCError) throw err;
       throw classifySorobanError(err);
     }
   }
@@ -148,11 +244,11 @@ export class SorobanHTLCAdapter
         callerAccountId,
         BigInt(numericId),
         preimage,
-        signer
+        signer,
+        this.config,
       );
       return { txId: txHash };
     } catch (err) {
-      if (err instanceof HTLCError) throw err;
       throw classifySorobanError(err);
     }
   }
@@ -172,11 +268,11 @@ export class SorobanHTLCAdapter
       const txHash = await this.client.refundOrder(
         callerAccountId,
         BigInt(numericId),
-        signer
+        signer,
+        this.config,
       );
       return { txId: txHash };
     } catch (err) {
-      if (err instanceof HTLCError) throw err;
       throw classifySorobanError(err);
     }
   }

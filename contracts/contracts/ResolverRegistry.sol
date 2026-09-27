@@ -85,13 +85,63 @@ contract ResolverRegistry is IResolverRegistry, Ownable2Step, ReentrancyGuard {
     mapping(address => uint256) private _resolverIndex;
 
     // ---------------------------------------------------------------
+    // Slash-reason taxonomy
+    // ---------------------------------------------------------------
+
+    /// @notice Enumeration of the recognised slash conditions.
+    ///
+    /// Conditions are typed so that on-chain event logs provide a
+    /// machine-readable audit trail that monitoring tools, the DAO,
+    /// and off-chain relayers can act on without parsing free-form text.
+    ///
+    ///  NonFulfillment    — Resolver accepted an order and locked destination
+    ///                      funds but failed to reveal the preimage before the
+    ///                      source timelock expired, causing the user's funds
+    ///                      to be locked unnecessarily.
+    ///
+    ///  InvalidSettlement — Resolver submitted a claim or settlement for the
+    ///                      wrong order (mismatched hashlock) or with an
+    ///                      invalid / forged preimage, violating the HTLC
+    ///                      contract's hash-preimage binding.
+    ///
+    ///  DoubleSpend       — Resolver attempted to route the same secret across
+    ///                      two competing orders, enabling double-claim of
+    ///                      destination funds.
+    ///
+    ///  ProtocolAbuse     — Catch-all for griefing, sandwich attacks, or other
+    ///                      deliberate exploitation of protocol mechanics that
+    ///                      does not fit the above categories.  Requires DAO
+    ///                      governance vote with documented evidence.
+    ///
+    ///  Unspecified       — Generic governance slash.  Use only when the
+    ///                      specific condition cannot be classified; include
+    ///                      an off-chain evidence link in the DAO proposal.
+    enum SlashReason {
+        Unspecified,
+        NonFulfillment,
+        InvalidSettlement,
+        DoubleSpend,
+        ProtocolAbuse
+    }
+
+    // ---------------------------------------------------------------
     // Events
     // ---------------------------------------------------------------
 
     event Registered(address indexed resolver, uint256 stake);
     event StakeIncreased(address indexed resolver, uint256 added, uint256 newTotal);
     event Unregistered(address indexed resolver, uint256 stakeReturned);
-    event Slashed(address indexed resolver, uint256 amount, address indexed beneficiary);
+    /// @notice Emitted when the DAO/multisig slashes a resolver's stake.
+    /// @param resolver    The slashed resolver address.
+    /// @param amount      Token units deducted from the resolver's stake.
+    /// @param beneficiary Destination of the slashed tokens.
+    /// @param reason      Typed condition that justified the slash.
+    event Slashed(
+        address indexed resolver,
+        uint256 amount,
+        address indexed beneficiary,
+        SlashReason reason
+    );
     event MinStakeUpdated(uint256 oldMinStake, uint256 newMinStake);
     event SlashBeneficiaryUpdated(address oldBeneficiary, address newBeneficiary);
 
@@ -141,6 +191,7 @@ contract ResolverRegistry is IResolverRegistry, Ownable2Step, ReentrancyGuard {
     ///      and be rejected by the AlreadyRegistered guard, preventing a
     ///      double-registration.
     function register(uint256 stake) external nonReentrant {
+        if (msg.sender == address(0)) revert InvalidAddress();
         if (stake < minStake) revert StakeBelowMinimum();
         if (_resolverIndex[msg.sender] != 0) revert AlreadyRegistered();
 
@@ -253,6 +304,13 @@ contract ResolverRegistry is IResolverRegistry, Ownable2Step, ReentrancyGuard {
     ///         that can call this; the design intent is that `owner` is
     ///         a DAO or multisig that votes on slashing.
     ///
+    /// @param resolver The address of the resolver to slash.
+    /// @param amount   Token units to deduct from the resolver's stake.
+    /// @param reason   Typed condition that justifies the slash.  Use
+    ///                 `SlashReason.Unspecified` only when no specific
+    ///                 condition applies and document the rationale in
+    ///                 the accompanying governance proposal.
+    ///
     /// @dev Access control: `onlyOwner` — only the DAO/multisig that controls
     ///      this registry. The owner CANNOT move funds out of `HTLCEscrow`;
     ///      the HTLC and registry are separate contracts. A registry compromise
@@ -271,26 +329,28 @@ contract ResolverRegistry is IResolverRegistry, Ownable2Step, ReentrancyGuard {
     ///      Invariants maintained: I1–I5 are unchanged (slash only mutates
     ///      `_resolvers[resolver]`; it does not touch _resolverList or
     ///      _resolverIndex).
-    function slash(address resolver, uint256 amount) external onlyOwner nonReentrant {
+    function slash(
+        address resolver,
+        uint256 amount,
+        SlashReason reason
+    ) external onlyOwner nonReentrant {
         if (amount == 0) revert InvalidAmount();
         if (_resolverIndex[resolver] == 0) revert NotRegistered();
 
         // ── Effects ──────────────────────────────────────────────────
         ResolverInfo storage info = _resolvers[resolver];
-        uint256 take = amount > info.stake ? info.stake : amount;
-        info.stake       -= take;
-        info.totalSlashed += take;
+        if (amount > info.stake) revert InvalidAmount();
+        info.stake        -= amount;
+        info.totalSlashed += amount;
         info.lastSlashAt   = uint64(block.timestamp);
         if (info.stake < minStake) {
             info.active = false;
         }
 
         // ── Interaction ───────────────────────────────────────────────
-        if (take > 0) {
-            stakeAsset.safeTransfer(slashBeneficiary, take);
-        }
+        stakeAsset.safeTransfer(slashBeneficiary, amount);
 
-        emit Slashed(resolver, take, slashBeneficiary);
+        emit Slashed(resolver, amount, slashBeneficiary, reason);
     }
 
     function setMinStake(uint256 newMinStake) external onlyOwner {
@@ -302,6 +362,21 @@ contract ResolverRegistry is IResolverRegistry, Ownable2Step, ReentrancyGuard {
         if (newBeneficiary == address(0)) revert InvalidAddress();
         emit SlashBeneficiaryUpdated(slashBeneficiary, newBeneficiary);
         slashBeneficiary = newBeneficiary;
+    }
+
+    /// @notice Begin a two-step transfer of the owner ("administrator") role.
+    ///
+    /// @dev Ownable2Step's base implementation does not guard against
+    ///      `newOwner == address(0)`, since it is sometimes used upstream to
+    ///      cancel a pending transfer. For this registry a zero pending
+    ///      administrator is never a valid handoff target, so it is rejected
+    ///      here before any pending-owner state is written or the
+    ///      `OwnershipTransferStarted` event is emitted. Valid two-step
+    ///      transfers to a non-zero address proceed exactly as before via
+    ///      `super.transferOwnership`.
+    function transferOwnership(address newOwner) public override onlyOwner {
+        if (newOwner == address(0)) revert InvalidAddress();
+        super.transferOwnership(newOwner);
     }
 
     // ---------------------------------------------------------------

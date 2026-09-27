@@ -94,6 +94,7 @@ import {
   retryEngineBackoffSeconds,
 } from '../metrics.js';
 import { getCorrelation } from '../correlation/correlation-context.js';
+import { getLogger } from '../logger.js';
 
 // ---------------------------------------------------------------------------
 // Fault classification
@@ -293,7 +294,7 @@ export class RetryEngine {
   private readonly breakers = new Map<string, CircuitBreaker>();
 
   constructor(options: RetryEngineOptions = {}) {
-    this.cfg = {
+    const merged = {
       defaultMaxAttempts: 5,
       defaultBaseDelayMs: 1_000,
       defaultMaxDelayMs: 30_000,
@@ -303,6 +304,15 @@ export class RetryEngine {
       jitterFactor: 0.2,
       ...options,
     };
+
+    // Clamp delay-related fields to their minimum sensible values so that a
+    // negative base delay or jitter factor cannot collapse backoff into an
+    // immediate busy-loop, which would make outage behaviour worse.
+    merged.defaultBaseDelayMs = Math.max(0, merged.defaultBaseDelayMs);
+    merged.defaultMaxDelayMs  = Math.max(0, merged.defaultMaxDelayMs);
+    merged.jitterFactor        = Math.max(0, merged.jitterFactor);
+
+    this.cfg = merged;
   }
 
   // ── Public API ────────────────────────────────────────────────────────────
@@ -322,8 +332,8 @@ export class RetryEngine {
     opts: RunOptions = {},
   ): Promise<T> {
     const maxAttempts = opts.maxAttempts ?? this.cfg.defaultMaxAttempts;
-    const baseDelayMs = opts.baseDelayMs ?? this.cfg.defaultBaseDelayMs;
-    const maxDelayMs = opts.maxDelayMs ?? this.cfg.defaultMaxDelayMs;
+    const baseDelayMs = Math.max(0, opts.baseDelayMs ?? this.cfg.defaultBaseDelayMs);
+    const maxDelayMs  = Math.max(0, opts.maxDelayMs  ?? this.cfg.defaultMaxDelayMs);
 
     // Circuit-breaker pre-check
     this._checkCircuit(action);
@@ -615,7 +625,5 @@ function _log(
   msg: string,
   extra: Record<string, unknown> = {},
 ): void {
-  const line = JSON.stringify({ level, msg, ts: new Date().toISOString(), ...extra }) + '\n';
-  if (level === 'error') process.stderr.write(line);
-  else process.stdout.write(line);
+  getLogger()[level](extra, msg);
 }

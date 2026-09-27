@@ -6,7 +6,8 @@ import { useSolanaWallet } from './hooks/useSolanaWallet'
 import { useEthereumWallet } from './hooks/useEthereumWallet'
 import { useNetworkMode } from './lib/useNetworkMode'
 import { pingBackendWake } from './lib/wakeBackend'
-import { isMainnetEnabled } from './config/networks'
+import { useFocusTrap } from './hooks/useFocusTrap'
+import { selectIsMainnetEnabled, selectResolvedNetworkMode, selectCurrentEthereumNetwork, selectCurrentStellarNetwork, selectApiBaseUrl, selectIntroAnimationEnabled, selectDarkVeilEnabled } from './config/selectors';
 
 // Non-critical components are lazy-loaded so the initial bridge form bundle
 // stays as small as possible. Suspense boundaries provide invisible fallbacks
@@ -33,7 +34,17 @@ function App() {
   const [showWalletMenu, setShowWalletMenu] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [activeTab, setActiveTab] = useState<'bridge' | 'history'>('bridge');
+  const introAllowed = selectIntroAnimationEnabled();
+  const darkVeilAllowed = selectDarkVeilEnabled();
+
+  // Ref for the wallet dropdown panel — used by useFocusTrap and the trigger button.
+  const walletMenuRef = useRef<HTMLDivElement>(null);
+  const walletTriggerRef = useRef<HTMLButtonElement>(null);
+  const walletMenuId = 'wallet-menu-dialog';
+  const walletMenuTitleId = 'wallet-menu-title';
+
   const [showIntro, setShowIntro] = useState(() => {
+    if (!introAllowed) return false;
     return sessionStorage.getItem('wafflefinance:intro-seen') !== 'true';
   });
   const [introLogoReady, setIntroLogoReady] = useState(false);
@@ -108,6 +119,20 @@ function App() {
       window.clearTimeout(removeTimer);
     };
   }, [showIntro, introLogoReady]);
+
+  // Focus-trap the wallet dropdown while it is open; Escape closes it.
+  useFocusTrap(walletMenuRef, showWalletMenu);
+  useEffect(() => {
+    if (!showWalletMenu) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setShowWalletMenu(false);
+        walletTriggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [showWalletMenu]);
 
   // MetaMask connection is handled by useEthereumWallet hook
 
@@ -253,7 +278,7 @@ function App() {
               </a>
             </nav>
 
-            {isMainnetEnabled() ? (
+            {selectIsMainnetEnabled() ? (
               <button
                 onClick={toggleNetwork}
                 className={`network-pill px-3 py-1.5 text-xs font-semibold transition-all duration-200 md:px-3.5 ${
@@ -584,22 +609,24 @@ function App() {
         </section>
       </main>
 
-      <div className="background-depth pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-        <div className="dark-veil-layer">
-          <Suspense fallback={null}>
-            <DarkVeil
-              hueShift={0}
-              noiseIntensity={0.008}
-              scanlineIntensity={0.035}
-              scanlineFrequency={1.8}
-              speed={0.9}
-              warpAmount={0.08}
-              resolutionScale={0.72}
-              verticalOffset={0.42}
-            />
-          </Suspense>
+      {darkVeilAllowed && (
+        <div className="background-depth pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+          <div className="dark-veil-layer">
+            <Suspense fallback={null}>
+              <DarkVeil
+                hueShift={0}
+                noiseIntensity={0.008}
+                scanlineIntensity={0.035}
+                scanlineFrequency={1.8}
+                speed={0.9}
+                warpAmount={0.08}
+                resolutionScale={0.72}
+                verticalOffset={0.42}
+              />
+            </Suspense>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Waffle backdrop — blended large waffle pattern behind everything */}
       <div className="waffle-backdrop-wrap">
