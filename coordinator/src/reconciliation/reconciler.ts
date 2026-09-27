@@ -61,6 +61,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import type { Logger } from "pino";
 import type { CoordinatorConfig } from "../config.js";
 import type { OrderService } from "../services/order-service.js";
+import type { Chain } from "../persistence/orders-repo.js";
 import {
   reconciliationRuns,
   reconciliationErrors,
@@ -120,6 +121,12 @@ import {
   ReplayPolicy,
   buildReplayDecision,
 } from "./replay-policy.js";
+import {
+  buildRecoveryReport,
+  formatRecoveryReport,
+  type ChainRecoveryInput,
+  type RecoveryReport,
+} from "./recovery-summary.js";
 
 // ─── Status types ─────────────────────────────────────────────────────────────
 
@@ -133,6 +140,8 @@ export interface ReconciliationStatus {
     soroban: number;
     solana: number;
   };
+  /** Populated after the first successful run — per-chain recovery replay. */
+  recovery?: RecoveryReport | null;
 }
 
 /**
@@ -201,6 +210,7 @@ export class Reconciler {
     lastRunAt: null,
     lastRunOk: null,
     eventsReplayed: 0,
+    recovery: null,
   };
 
   constructor(
@@ -307,6 +317,7 @@ export class Reconciler {
     }
 
     // Update run-level status.
+    const recovery = this.buildRecoveryReport();
     this.status = {
       lastRunAt: Date.now(),
       lastRunOk: runOk,
@@ -316,7 +327,9 @@ export class Reconciler {
         soroban: this.sorobanCursor?.getHwm() ?? 0,
         solana: this.solanaCursor?.getHwm() ?? 0,
       },
+      recovery,
     };
+    this.logRecoverySummary(recovery);
 
     if (runOk) {
       reconciliationRuns.inc({ result: "success" });
@@ -1267,6 +1280,53 @@ export class Reconciler {
     }
 
     return 0;
+  }
+
+  /**
+   * Build the operator-facing recovery report for the run that just finished.
+   *
+   * Uses each replay decision's effective `toBlock` as the tip and recomputes
+   * the scanner's actual from/to per chain, so the report is consistent with
+   * what was scanned even after a lookback fallback or forced re-sync.
+   */
+  private buildRecoveryReport(): RecoveryReport {
+    const hwmByChain: Record<string, number> = {
+      ethereum: this.ethCursor?.getHwm() ?? 0,
+      stellar: this.sorobanCursor?.getHwm() ?? 0,
+      solana: this.solanaCursor?.getHwm() ?? 0,
+    };
+
+    const inputs: ChainRecoveryInput[] = this.policy.getDecisions().map((decision) => ({
+      chain: decision.chain as Chain,
+      hwm: hwmByChain[decision.chain] ?? 0,
+      tip: decision.toBlock,
+      fromBlock: decision.fromBlock,
+    }));
+
+    return buildRecoveryReport(inputs);
+  }
+
+  /**
+   * Log the recovery replay summary with an appropriate level per overall
+   * verdict: info while catching up, warn when at risk, error on forced
+   * re-sync (events may have been permanently missed).
+   */
+  private logRecoverySummary(recovery: RecoveryReport): void {
+    if (recovery.chainSummaries.length === 0) return;
+    const message = formatRecoveryReport(recovery);
+    switch (recovery.overall) {
+      case "intervention_required":
+        this.log.error({ recovery: recovery.chainSummaries, overall: recovery.overall }, message);
+        break;
+      case "at_risk":
+        this.log.warn({ recovery: recovery.chainSummaries, overall: recovery.overall }, message);
+        break;
+      case "recovering":
+        this.log.info({ recovery: recovery.chainSummaries, overall: recovery.overall }, message);
+        break;
+      default:
+        break; // healthy — nothing to flag; regular run logs cover it.
+    }
   }
 
   private emitPolicyMetrics(): void {

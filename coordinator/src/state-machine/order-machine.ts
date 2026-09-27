@@ -23,8 +23,13 @@ import { orderInvalidTransitions } from "../metrics.js";
  *   announced-but-unlocked order.
  *   `abandoned` is set by the stale-cleanup service for announced orders
  *   that received no source-chain lock within the retention window.
+ *
+ * SINGLE SOURCE OF TRUTH: this table mirrors the SDK's canonical
+ * `ORDER_STATUS_TRANSITIONS` and is pinned to it by the conformance suite
+ * (`test/status-conformance.test.ts`), so the backing service can never
+ * drift from the shared vocabulary during a refactor.
  */
-const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   announced: ["src_locked", "cancelled", "abandoned", "failed", "expired"],
   src_locked: ["dst_locked", "secret_revealed", "refunded", "failed", "expired"],
   dst_locked: ["secret_revealed", "refunded", "failed", "expired"],
@@ -36,6 +41,8 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   cancelled: [],
   abandoned: [],
 };
+
+const TRANSITIONS = ORDER_STATUS_TRANSITIONS as Record<OrderStatus, OrderStatus[]>;
 
 export class InvalidTransitionError extends Error {
   constructor(public readonly from: OrderStatus, public readonly to: OrderStatus) {

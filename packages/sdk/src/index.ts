@@ -1,8 +1,14 @@
 // Types
+export {
+  ORDER_STATUSES,
+  TERMINAL_ORDER_STATUSES,
+  isOrderStatus,
+} from "./types/index.js";
 export type {
   Chain,
   Direction,
   OrderStatus,
+  TerminalOrderStatus,
   Order,
   ChainLeg,
   ResolverInfo,
@@ -89,12 +95,24 @@ export {
 
 // State Machine
 export {
+  ORDER_STATUS_TRANSITIONS,
   InvalidTransitionError,
   canTransition,
   requireTransition,
   isTerminal,
   nextStatesOf,
 } from "./state-machine/index.js";
+
+// Status display — canonical order-status → user-facing mapping
+export {
+  displayStatusFor,
+  statusDisplay,
+  describeOrderStatus,
+  isDisplayStatus,
+  ALL_DISPLAY_STATUSES,
+  ORDER_STATUS_TO_DISPLAY,
+} from "./status-display/index.js";
+export type { DisplayStatus, StatusDisplay } from "./status-display/index.js";
 
 // Assets
 export {

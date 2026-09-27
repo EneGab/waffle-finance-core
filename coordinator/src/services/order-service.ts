@@ -77,6 +77,7 @@ function _directionCounts(direction: string): Record<string, number> {
   return out;
 }
 
+/**
  * Record lifecycle transition metrics for an order moving from one state
  * to another.  Updates:
  *  - `orderLifecycleTransitions` counter (direction, from, to)

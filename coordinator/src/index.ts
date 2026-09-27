@@ -10,6 +10,7 @@ import { EthereumListener } from './listeners/ethereum-listener.js';
 import { SorobanListener } from './listeners/soroban-listener.js';
 import { SolanaListener } from './listeners/solana-listener.js';
 import { Reconciler } from './reconciliation/reconciler.js';
+import { formatRecoveryReport } from './reconciliation/recovery-summary.js';
 import { CacheVerifier } from './reconciliation/cache-verifier.js';
 import { StaleCleanupService } from './services/stale-cleanup.js';
 import { ArchivalPolicy } from './archival/archival-policy.js';
@@ -403,6 +404,15 @@ async function main(): Promise<void> {
       await reconciler.run();
       const report = evaluateDependencyHealth(await readiness());
       startupPhase = report.overall === 'healthy' ? 'ready' : 'degraded';
+      const recovery = reconciler.getStatus().recovery;
+      if (recovery && recovery.chainSummaries.length > 0) {
+        // Single, operator-readable replay-window summary right after the
+        // first run so the recovery path for any missed events is explicit.
+        log.info(
+          { overall: recovery.overall, recovery: recovery.chainSummaries },
+          formatRecoveryReport(recovery)
+        );
+      }
       if (report.overall === 'healthy') {
         log.info('first reconciliation complete — coordinator is READY');
       } else {
