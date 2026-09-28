@@ -141,19 +141,19 @@ function mockConnection(overrides: {
   vi.spyOn(RealTx.prototype, "serialize").mockReturnValue(Buffer.from("mocktx"));
 
   vi.spyOn(RealConn.prototype, "getAccountInfo").mockImplementation(
-    overrides.getAccountInfo ?? (async () => null),
+    (overrides.getAccountInfo ?? (async () => null)) as any,
   );
   vi.spyOn(RealConn.prototype, "sendRawTransaction").mockImplementation(
-    overrides.sendRawTransaction ?? (async () => "mocksig123"),
+    (overrides.sendRawTransaction ?? (async () => "mocksig123")) as any,
   );
   vi.spyOn(RealConn.prototype, "confirmTransaction").mockImplementation(
-    overrides.confirmTransaction ?? (async () => {}),
+    (overrides.confirmTransaction ?? (async () => {})) as any,
   );
   vi.spyOn(RealConn.prototype, "getBalance").mockImplementation(
-    overrides.getBalance ?? (async () => 10_000_000_000),
+    (overrides.getBalance ?? (async () => 10_000_000_000)) as any,
   );
   vi.spyOn(RealConn.prototype, "getMinimumBalanceForRentExemption").mockImplementation(
-    overrides.getMinimumBalanceForRentExemption ?? (async () => 2_039_280),
+    (overrides.getMinimumBalanceForRentExemption ?? (async () => 2_039_280)) as any,
   );
 }
 
@@ -901,7 +901,7 @@ describe("network simulation — RPC lag and delayed confirmation", () => {
     vi.spyOn(RealTx.prototype, "serialize").mockReturnValue(Buffer.from("mocktx"));
     vi.spyOn(RealConn.prototype, "sendRawTransaction").mockResolvedValue("lagsig");
     vi.spyOn(RealConn.prototype, "confirmTransaction").mockImplementation(
-      () => new Promise((resolve) => setTimeout(resolve, 50)),
+      (() => new Promise((resolve) => setTimeout(resolve, 50))) as any,
     );
 
     const client = new SolanaHTLCClient({ rpcUrl: "https://api.devnet.solana.com", programId: PROGRAM_ID });
@@ -919,9 +919,9 @@ describe("network simulation — RPC lag and delayed confirmation", () => {
     vi.spyOn(RealConn.prototype, "getLatestBlockhash").mockResolvedValue({ blockhash: MOCK_BLOCKHASH, lastValidBlockHeight: 9999 });
     vi.spyOn(RealTx.prototype, "serialize").mockReturnValue(Buffer.from("mocktx"));
     vi.spyOn(RealConn.prototype, "sendRawTransaction").mockResolvedValue("unconfirmed_sig");
-    vi.spyOn(RealConn.prototype, "confirmTransaction").mockImplementation(async () => {
+    vi.spyOn(RealConn.prototype, "confirmTransaction").mockImplementation((async () => {
       confirmedCalled++;
-    });
+    }) as any);
 
     const client = new SolanaHTLCClient({ rpcUrl: "https://api.devnet.solana.com", programId: PROGRAM_ID });
     const signer = makeSigner();
@@ -973,7 +973,7 @@ describe("network simulation — RPC failures and retries", () => {
     vi.spyOn(RealConn.prototype, "getLatestBlockhash").mockRejectedValue(new Error("network error: failed to fetch"));
     vi.spyOn(RealTx.prototype, "serialize").mockReturnValue(Buffer.from("mocktx"));
     vi.spyOn(RealConn.prototype, "sendRawTransaction").mockResolvedValue("unreachable");
-    vi.spyOn(RealConn.prototype, "confirmTransaction").mockResolvedValue(undefined);
+    vi.spyOn(RealConn.prototype, "confirmTransaction").mockResolvedValue(undefined as any);
 
     const client  = new SolanaHTLCClient({ rpcUrl: "https://api.devnet.solana.com", programId: PROGRAM_ID });
     const adapter = new SolanaHTLCAdapter(client);

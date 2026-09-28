@@ -44,6 +44,7 @@ If you add a new document, add a row here in the same PR.
 | `docs/RELEASE_CONTRACT.md` | current | Engineering | Per-package build target, artifact, environment assumptions, and verification gaps |
 | `docs/DEVELOPMENT.md` | current | Engineering | Local development setup, env vars, troubleshooting |
 | `docs/OPERATIONS.md` | current | Operations | Production operations: deployment topology, health endpoints, runbook pointers |
+| `docs/ALERTING.md` | current | Operations | **Alerting runbook** — Prometheus alert rules and operational thresholds for stale-order cleanup, expiry, and recovery metrics |
 | `docs/HEALTH_DASHBOARD.md` | current | Operations | Health and readiness endpoint reference for all services |
 | `docs/CONTRIBUTOR_HANDBOOK.md` | current | Engineering | Contribution guidelines, code review norms, branch strategy |
 | `docs/DEPENDENCY_POLICY.md` | current | Engineering | Dependency pinning policy, upgrade procedure, audit-critical packages |
@@ -103,7 +104,7 @@ If you add a new document, add a row here in the same PR.
 | `packages/sdk/README.md` | current | Engineering | SDK usage, subpath exports, build |
 | `packages/sdk/ASSET_MAPPING_CONTRACT.md` | current | Engineering | Asset mapping contract between SDK and chain clients |
 | `packages/sdk/ROUTE_REGISTRY.md` | current | Engineering | Route registry spec |
-| `packages/sdk/TREE_SHAKING.md` | current | Engineering | SDK bundle size and tree-shaking guidance |
+| `packages/sdk/TREE_SHAKING.md` | current | Engineering | SDK intended package shape, per-entry import cost, subpath isolation (#731) |
 | `soroban/README.md` | current | Engineering | Soroban contracts: build, test, deploy, TS bindings |
 | `soroban/docs/` | current | Engineering | Soroban-specific design docs |
 | `docs/SOROBAN_OPERATOR_GUIDE.md` | current | Operations | Soroban trust model, lifecycle, readiness checks, RPC degradation, recovery |

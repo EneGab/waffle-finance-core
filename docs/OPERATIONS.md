@@ -280,6 +280,10 @@ export MAINTENANCE_MODE=true
 
 ## Monitoring Guide
 
+> For the full Prometheus rule set and thresholds (stale-cleanup backlog,
+> expiry backlog, job stalls, failed recovery paths) see
+> [`docs/ALERTING.md`](./ALERTING.md).
+
 ### Key Metrics to Watch
 
 | Metric                                             | Alert Threshold | Meaning                 |
@@ -289,6 +293,9 @@ export MAINTENANCE_MODE=true
 | `resolvers_active`                                 | = 0             | No resolvers available  |
 | `rpc_errors_total`                                 | > 10/min        | RPC connectivity issues |
 | `restart_count`                                    | > 5             | Service instability     |
+| `coordinator_stale_cleanup_backlog`                 | > 50 for 30m    | Stale-order backlog size (see [`docs/ALERTING.md`](./ALERTING.md)) |
+| `coordinator_stale_cleanup_remaining`               | > 0 for 2h      | Stale orders left unarchived after a run |
+| `coordinator_expired_orders_backlog`               | > 20 for 30m    | Expired orders awaiting refund/failure |
 
 ### Health Check Script
 

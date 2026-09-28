@@ -1,25 +1,16 @@
 import { describe, it, expect } from "vitest";
 import {
+  ORDER_STATUS_TRANSITIONS,
   canTransition,
   InvalidTransitionError,
   isTerminal,
   nextStatesOf,
   requireTransition,
 } from "../src/state-machine/index.js";
+import { ORDER_STATUSES, TERMINAL_ORDER_STATUSES, isOrderStatus } from "../src/types/index.js";
 import type { OrderStatus } from "../src/types/index.js";
 
-const ALL_STATUSES: OrderStatus[] = [
-  "announced",
-  "src_locked",
-  "dst_locked",
-  "secret_revealed",
-  "completed",
-  "refunded",
-  "failed",
-  "expired",
-  "cancelled",
-  "abandoned",
-];
+const ALL_STATUSES: OrderStatus[] = [...ORDER_STATUSES];
 
 const EXPECTED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   announced: ["src_locked", "cancelled", "abandoned", "failed", "expired"],
@@ -35,6 +26,29 @@ const EXPECTED_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 };
 
 describe("order state machine", () => {
+  it("exposes ORDER_STATUS_TRANSITIONS as the canonical table", () => {
+    expect(ORDER_STATUS_TRANSITIONS).toEqual(EXPECTED_TRANSITIONS);
+  });
+
+  it("covers exactly the canonical ORDER_STATUSES", () => {
+    expect(Object.keys(ORDER_STATUS_TRANSITIONS).sort()).toEqual([...ORDER_STATUSES].sort());
+  });
+
+  it("TERMINAL_ORDER_STATUSES matches the empty-next-state set", () => {
+    const terminals = Object.entries(ORDER_STATUS_TRANSITIONS)
+      .filter(([, next]) => next.length === 0)
+      .map(([status]) => status);
+    expect(terminals.sort()).toEqual([...TERMINAL_ORDER_STATUSES].sort());
+  });
+
+  it("isOrderStatus guards every canonical atom and rejects everything else", () => {
+    for (const atom of ORDER_STATUSES) {
+      expect(isOrderStatus(atom)).toBe(true);
+    }
+    for (const raw of ["announced_to_x", "PENDING", "", null, undefined, 42, {}]) {
+      expect(isOrderStatus(raw)).toBe(false);
+    }
+  });
   it("matches the complete transition matrix", () => {
     for (const from of ALL_STATUSES) {
       expect(nextStatesOf(from)).toEqual(EXPECTED_TRANSITIONS[from]);

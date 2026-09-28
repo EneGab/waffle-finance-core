@@ -70,12 +70,14 @@ import {
   type FaultClassifier,
   type FaultClass,
 } from '../utils/retry-engine.js';
+import { IdempotencyManager } from '../idempotency.js';
 import {
   settlementAttemptsTotal,
   settlementFailuresTotal,
   settlementRecoveryTotal,
   settlementStateGauge,
   settlementDurationSeconds,
+  settlementSuccessTotal,
 } from '../metrics.js';
 
 // ---------------------------------------------------------------------------
@@ -144,6 +146,8 @@ export interface SettlementServiceOptions {
   txStateStore?: TxStateStore;
   /** Injected RetryEngine — create isolated instance in tests. */
   retryEngine?: RetryEngine;
+  /** Injected IdempotencyManager — for deduplication across restarts. */
+  idempotencyManager?: IdempotencyManager;
   /**
    * Maximum retry attempts per settlement action.
    * Defaults to 5. Override per-call via SettleOptions.maxAttempts.
@@ -165,6 +169,7 @@ export class SettlementService {
   private readonly defaultMaxAttempts: number;
   private readonly defaultBaseDelayMs: number;
   private readonly defaultMaxDelayMs: number;
+  private readonly idempotencyManager: IdempotencyManager;
 
   /**
    * In-process index from Soroban `contractKey` → `orderId`.
@@ -178,6 +183,7 @@ export class SettlementService {
   constructor(options: SettlementServiceOptions = {}) {
     this.store = options.txStateStore ?? new TxStateStore();
     this.engine = options.retryEngine ?? new RetryEngine();
+    this.idempotencyManager = options.idempotencyManager ?? new IdempotencyManager();
     this.defaultMaxAttempts = options.defaultMaxAttempts ?? 5;
     this.defaultBaseDelayMs = options.defaultBaseDelayMs ?? 1_000;
     this.defaultMaxDelayMs = options.defaultMaxDelayMs ?? 30_000;
@@ -313,6 +319,7 @@ export class SettlementService {
         { direction, outcome: 'success' },
         (Date.now() - startedAt) / 1000,
       );
+      settlementSuccessTotal.inc({ direction });
       this._updateStateGauge();
 
       if (opts.contractKey) {
@@ -409,6 +416,16 @@ export class SettlementService {
    */
   getStatus(orderId: string): TxStateRecord | undefined {
     return this.store.get(orderId);
+  }
+
+  /**
+   * Check if an action is safe to attempt based on idempotency.
+   * Returns true if the action can proceed, false if it was already completed.
+   */
+  canAttempt(orderId: string, actionType: 'claim' | 'refund'): boolean {
+    const existing = this.idempotencyManager.get(orderId, actionType);
+    if (!existing) return true;
+    return existing.state !== 'completed' && existing.state !== 'failed';
   }
 
   /**

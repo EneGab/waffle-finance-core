@@ -1,8 +1,14 @@
 // Types
+export {
+  ORDER_STATUSES,
+  TERMINAL_ORDER_STATUSES,
+  isOrderStatus,
+} from "./types/index.js";
 export type {
   Chain,
   Direction,
   OrderStatus,
+  TerminalOrderStatus,
   Order,
   ChainLeg,
   ResolverInfo,
@@ -10,6 +16,23 @@ export type {
   ExternalBridgeRoute,
   ExternalBridgeAdapter,
 } from "./types/index.js";
+
+// SDK runtime configuration validation
+export {
+  SdkConfigurationError,
+  validateRpcUrl,
+  validateChainId,
+  validateEthereumAddress,
+  validateSolanaAddress as validateSolanaConfigAddress,
+  validateSorobanAddress,
+  validateNetworkPassphrase,
+  validateChainPair,
+} from "./config-validation.js";
+export type {
+  SdkConfigIssue,
+  SdkConfigIssueCode,
+  ChainPairValidationInput,
+} from "./config-validation.js";
 
 // Route-identity registry — single source of truth for supported routes
 export {
@@ -89,12 +112,24 @@ export {
 
 // State Machine
 export {
+  ORDER_STATUS_TRANSITIONS,
   InvalidTransitionError,
   canTransition,
   requireTransition,
   isTerminal,
   nextStatesOf,
 } from "./state-machine/index.js";
+
+// Status display — canonical order-status → user-facing mapping
+export {
+  displayStatusFor,
+  statusDisplay,
+  describeOrderStatus,
+  isDisplayStatus,
+  ALL_DISPLAY_STATUSES,
+  ORDER_STATUS_TO_DISPLAY,
+} from "./status-display/index.js";
+export type { DisplayStatus, StatusDisplay } from "./status-display/index.js";
 
 // Assets
 export {
@@ -107,8 +142,11 @@ export {
   resolveSolanaAsset,
   resolveEthereumTokenFromSolana,
   normalizeEthereumAddress,
+  assertCanonicalEthereumAddress,
   normalizeStellarAssetKey,
+  assertCanonicalStellarAssetKey,
   normalizeSolanaMint,
+  assertCanonicalSolanaMint,
   isSupportedEthToStellar,
   isSupportedStellarToEth,
   isSupportedEthToSolana,
@@ -130,6 +168,7 @@ export {
   getSupportedSolanaToStellar,
   toCanonicalId,
   UnsupportedAssetError,
+  InvalidAssetIdentifierError,
   type AssetMappingNetwork,
   type CanonicalStellarAsset,
   type CanonicalSolanaAsset,

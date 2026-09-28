@@ -5,8 +5,11 @@ import {
   resolveSolanaAsset,
   resolveEthereumTokenFromSolana,
   normalizeEthereumAddress,
+  assertCanonicalEthereumAddress,
   normalizeStellarAssetKey,
+  assertCanonicalStellarAssetKey,
   normalizeSolanaMint,
+  assertCanonicalSolanaMint,
   isSupportedEthToStellar,
   isSupportedStellarToEth,
   isSupportedEthToSolana,
@@ -28,6 +31,7 @@ import {
   getSupportedSolanaToStellar,
   toCanonicalId,
   UnsupportedAssetError,
+  InvalidAssetIdentifierError,
   NATIVE_ETH_ADDRESS,
   NATIVE_STELLAR_ASSET,
   NATIVE_SOL_MINT,
@@ -43,6 +47,7 @@ const STELLAR_USDC_KEY = `USDC:${STELLAR_USDC_ISSUER}`;
 const DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
 const UNKNOWN_ETH = "0x1111111111111111111111111111111111111111";
 const UNKNOWN_MINT = "UnknownMintAddressXXXXXXXXXXXXXXXXXXXXXXXXX";
+const VALID_ETH_TOKEN = "0x1111111111111111111111111111111111111111";
 
 // ── resolveStellarAsset (original behaviour preserved) ────────────────────
 
@@ -670,13 +675,18 @@ describe("toCanonicalId", () => {
   });
 
   it("produces chain:contract:SYMBOL:address for contract assets", () => {
-    const id = toCanonicalId("ethereum", "USDC", "0xA0b86a33e6417C4fd30aD9d05D6b9b7CD6Dd11b");
-    expect(id).toBe("ethereum:contract:USDC:0xa0b86a33e6417c4fd30ad9d05d6b9b7cd6dd11b");
+    const id = toCanonicalId("ethereum", "USDC", "0x1111111111111111111111111111111111111111");
+    expect(id).toBe("ethereum:contract:USDC:0x1111111111111111111111111111111111111111");
   });
 
-  it("lower-cases the address in contract canonical ids", () => {
+  it("lower-cases EVM addresses in contract canonical ids", () => {
     const id = toCanonicalId("ethereum", "WETH", "0xC02AAA39B223FE8D0A0E5C4F27EAD9083C756CC2");
     expect(id).toBe("ethereum:contract:WETH:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2");
+  });
+
+  it("preserves case-sensitive Solana mints in contract canonical ids", () => {
+    const id = toCanonicalId("solana", "USDC", DEVNET_USDC_MINT);
+    expect(id).toBe(`solana:contract:USDC:${DEVNET_USDC_MINT}`);
   });
 
   it("matches the frontend NormalizedAsset.canonicalId format", () => {
@@ -689,7 +699,7 @@ describe("toCanonicalId", () => {
   });
 
   it("produces distinct ids for the same symbol on different chains", () => {
-    const ethUsdc = toCanonicalId("ethereum", "USDC", "0xa0b86a33e6417c4fd30ad9d05d6b9b7cd6dd11b");
+    const ethUsdc = toCanonicalId("ethereum", "USDC", VALID_ETH_TOKEN);
     const solUsdc = toCanonicalId("solana", "USDC", "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
     expect(ethUsdc).not.toBe(solUsdc);
   });
@@ -699,5 +709,14 @@ describe("toCanonicalId", () => {
     expect(() => assertSupportedSolanaToStellar("UnknownMint1111111111111111111111111111111", "testnet")).toThrow(UnsupportedAssetError);
     expect(() => assertSupportedEthToStellar("0x1111111111111111111111111111111111111111", "testnet")).toThrow(UnsupportedAssetError);
     expect(() => assertSupportedEthToSolana("0x1111111111111111111111111111111111111111", "testnet")).toThrow(UnsupportedAssetError);
+  });
+
+  it("rejects malformed canonical identifiers before serialising", () => {
+    expect(() => assertCanonicalEthereumAddress("0x123")).toThrow(InvalidAssetIdentifierError);
+    expect(assertCanonicalStellarAssetKey(STELLAR_USDC_KEY)).toBe(STELLAR_USDC_KEY);
+    expect(() => assertCanonicalStellarAssetKey("USDC:not-an-issuer")).toThrow(InvalidAssetIdentifierError);
+    expect(assertCanonicalSolanaMint(DEVNET_USDC_MINT)).toBe(DEVNET_USDC_MINT);
+    expect(() => assertCanonicalSolanaMint("0xnotSolana")).toThrow(InvalidAssetIdentifierError);
+    expect(() => toCanonicalId("ethereum", "BAD", "not-an-address")).toThrow(InvalidAssetIdentifierError);
   });
 });
