@@ -33,6 +33,21 @@ export type {
 const CHAIN = "soroban";
 
 /**
+ * Maximum number of event keys retained in the deduplication Set before it is
+ * pruned.  Soroban poll batches are at most 100 events, and each event has a
+ * unique txHash, so 10 000 entries gives more than enough headroom to absorb
+ * any replay window after a listener restart.
+ */
+const DEDUP_MAX_SIZE = 10_000;
+
+/**
+ * Build the deduplication key for a Soroban HTLC event.
+ *
+ * Soroban events within the same transaction share a txHash but differ by
+ * type (created / claimed / refunded), so we key on `txHash:eventType`.
+ */
+function dedupKey(txHash: string, eventType: string): string {
+  return `${txHash}:${eventType}`;
  * Regex patterns that indicate the RPC node's history window no longer
  * covers the ledger we are requesting.  The Soroban RPC returns a plain
  * error string whose exact wording varies by node implementation, so we
@@ -130,6 +145,11 @@ export class SorobanListener {
   private timeoutId?: ReturnType<typeof setTimeout>;
 
   /**
+   * Cross-restart deduplication Set.  Lives on the instance so it survives
+   * Supervisor-driven restarts without re-triggering already-processed events.
+   * Keyed by `txHash:eventType`.
+   */
+  private readonly processedEvents = new Set<string>();
    * Deduplication window: tracks the (ledger, txHash, topicHash) of the last
    * N events so that if the listener resumes from a cursor that overlaps with
    * events already dispatched in the previous run, we don't double-fire.
@@ -158,6 +178,34 @@ export class SorobanListener {
       options.cursorLabel ??
       `soroban-${cfg.soroban.htlc ?? "unknown"}`;
   }
+
+  // ── Deduplication helpers ─────────────────────────────────────────────────
+
+  /**
+   * Returns true when the event has already been processed.
+   * Inserts the key into the Set when it is new.
+   * Evicts the oldest half of entries once the Set exceeds DEDUP_MAX_SIZE.
+   */
+  private isDuplicate(txHash: string, eventType: string): boolean {
+    const key = dedupKey(txHash, eventType);
+    if (this.processedEvents.has(key)) {
+      return true;
+    }
+    if (this.processedEvents.size >= DEDUP_MAX_SIZE) {
+      const half = DEDUP_MAX_SIZE / 2;
+      let pruned = 0;
+      for (const k of this.processedEvents) {
+        this.processedEvents.delete(k);
+        pruned++;
+        if (pruned >= half) break;
+      }
+      this.log.debug({ pruned, remaining: this.processedEvents.size }, "pruned dedup Set");
+    }
+    this.processedEvents.add(key);
+    return false;
+  }
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   async start(handlers: SorobanEventHandlers): Promise<void> {
     if (!this.cfg.soroban.htlc) {
@@ -368,6 +416,24 @@ export class SorobanListener {
           this._trackDedup(dedupKey);
           continue;
         }
+
+        // ── Deduplication guard ───────────────────────────────────────────
+        const txHash = meta.txHash ?? "";
+        const eventType = typed.type;
+        if (this.isDuplicate(txHash, eventType)) {
+          this.log.debug(
+            { txHash, eventType, ledger: meta.ledger },
+            "duplicate Soroban event dropped (already processed)",
+          );
+          listenerErrorsTotal.inc({ chain: CHAIN, error_type: "duplicate_event" });
+          continue;
+        }
+
+        eventsTotal.inc({ chain: CHAIN, event_type: "contract_event" });
+        listenerLastEventTimestampSeconds.set(
+          { chain: CHAIN },
+          Math.floor(Date.now() / 1000),
+        );
 
         switch (typed.type) {
           case "created":
