@@ -9,6 +9,7 @@ import FusionEventManager, { EventType } from '../events/event-handlers.js';
 import { getCurrentTimestamp } from './utils.js';
 import { KeyedMutex } from '../utils/concurrency.js';
 import { getLogger } from '../logger.js';
+import { recoveryTimeSeconds, rpcErrorsTotal } from '../metrics.js';
 
 const log = getLogger().child({ service: 'recovery-service' });
 
