@@ -131,9 +131,26 @@ docker-compose.override.yml
 tmp/
 temp/
 
-# Proptest regressions
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Test snapshots
+**/__snapshots__/
+**/*.snap
+**/test-snapshots/
+
+# Local config files
+*.local
+# Test snapshots and artifacts
+**/__snapshots__/
+**/*.snap
 proptest-regressions/
 
 # Miscellaneous
 AGENTS.md
 .kilocode/
+ 

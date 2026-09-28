@@ -2,7 +2,6 @@ import {
   Address as SorobanAddress,
   BASE_FEE,
   Contract,
-  Networks,
   TransactionBuilder,
   nativeToScVal,
   scValToNative,
@@ -17,6 +16,11 @@ import {
   type OrchestrationConfig,
   type OrchestratedResult,
 } from "./orchestrator.js";
+import {
+  validateNetworkPassphrase,
+  validateRpcUrl,
+  validateSorobanAddress,
+} from "../config-validation.js";
 
 export { type OrchestrationConfig, type OrchestratedResult } from "./orchestrator.js";
 
@@ -63,10 +67,13 @@ export class SorobanHTLCClient {
   private readonly orchestrationConfig: OrchestrationConfig;
 
   constructor(opts: SorobanHTLCClientOptions) {
-    this.contractId = opts.contractId;
-    this.server = new rpc.Server(opts.rpcUrl, { allowHttp: opts.allowHttp ?? false });
-    this.contract = new Contract(opts.contractId);
-    this.networkPassphrase = opts.networkPassphrase ?? Networks.TESTNET;
+    const allowHttp = opts.allowHttp ?? false;
+    const rpcUrl = validateRpcUrl(opts.rpcUrl, "soroban.rpcUrl", { allowHttp });
+    const contractId = validateSorobanAddress(opts.contractId, "soroban.contractId");
+    this.contractId = contractId;
+    this.server = new rpc.Server(rpcUrl, { allowHttp });
+    this.contract = new Contract(contractId);
+    this.networkPassphrase = validateNetworkPassphrase(opts.networkPassphrase, "soroban.networkPassphrase");
     this.orchestrationConfig = opts.orchestration ?? {};
   }
 
