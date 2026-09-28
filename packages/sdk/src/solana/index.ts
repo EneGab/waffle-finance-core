@@ -67,6 +67,7 @@ import {
   validateRefundOrderParams,
   AccountValidationError,
 } from "./account-validation.js";
+import { validateRpcUrl, validateSolanaAddress } from "../config-validation.js";
 
 export {
   validateCreateOrderParams,
@@ -411,13 +412,16 @@ export class SolanaHTLCClient {
   private readonly validateBeforeSubmit: boolean;
 
   constructor(opts: SolanaHTLCClientOptions) {
-    this.programId = opts.programId;
+    const rpcUrl = validateRpcUrl(opts.rpcUrl, "solana.rpcUrl");
+    const simulation = opts.programId === "PLACEHOLDER";
+    const programId = simulation ? opts.programId : validateSolanaAddress(opts.programId, "solana.programId");
+    this.programId = programId;
     this.commitment = opts.commitment ?? "confirmed";
-    this.connection = new Connection(opts.rpcUrl, this.commitment);
+    this.connection = new Connection(rpcUrl, this.commitment);
     this.validateBeforeSubmit = opts.validateBeforeSubmit ?? false;
 
     // Enter simulation mode only when no real program id is configured.
-    this.simulation = opts.programId === "PLACEHOLDER" || opts.programId === "";
+    this.simulation = simulation;
 
     if (this.simulation) {
       this.programPk = null;
@@ -426,7 +430,7 @@ export class SolanaHTLCClient {
         "All mutating calls return mock signatures."
       );
     } else {
-      this.programPk = new PublicKey(opts.programId);
+      this.programPk = new PublicKey(programId);
     }
   }
 

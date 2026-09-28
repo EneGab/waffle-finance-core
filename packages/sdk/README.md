@@ -61,6 +61,82 @@ re-exported from the registry.
 All asset resolution pivots through Ethereum today, which is why there's no
 direct Stellar↔Solana resolver.
 
+Use `validateChainPair` (`@wafflefinance/sdk/config-validation`) when a caller
+starts from chain names instead of a direction. It derives the direction from
+the same route matrix and rejects undeclared, planned, or wrong-network pairs
+before checkout or order processing begins:
+
+```typescript
+import { validateChainPair } from '@wafflefinance/sdk/config-validation';
+
+validateChainPair({ src: 'ethereum', dst: 'stellar', network: 'testnet' });
+validateChainPair({ src: 'stellar', dst: 'solana', network: 'testnet' }); // throws: route_not_live
+```
+
+## Runtime configuration validation
+
+The SDK validates required runtime configuration at client construction time so
+frontend, coordinator, relayer, and resolver fail before the first RPC call when
+an env var is missing or points at the wrong network.
+
+```typescript
+import {
+  SdkConfigurationError,
+  validateRpcUrl,
+  validateEthereumAddress,
+  validateChainId,
+} from '@wafflefinance/sdk/config-validation';
+
+try {
+  validateRpcUrl(process.env.ETH_RPC_URL, 'ETH_RPC_URL');
+  validateChainId(process.env.ETH_CHAIN_ID, 'ETH_CHAIN_ID');
+  validateEthereumAddress(process.env.ETH_HTLC_ESCROW, 'ETH_HTLC_ESCROW');
+} catch (err) {
+  if (err instanceof SdkConfigurationError) {
+    console.error(err.issues); // field, code, actionable message
+  }
+}
+```
+
+Constructors run the same checks:
+
+- `EthereumHTLCClient` validates the escrow address and, when `chainId` is
+  supplied, checks it against `publicClient.chain.id`.
+- `SorobanHTLCClient` validates RPC URL, network passphrase, and contract id.
+  Plain HTTP requires `allowHttp: true` and should only be used for local
+  sandboxes.
+- `SolanaHTLCClient` validates RPC URL and program id. Simulation mode is
+  explicit: use `programId: "PLACEHOLDER"`. Empty program ids are rejected.
+
+Required production inputs are RPC URL, chain/network id or passphrase, deployed
+HTLC contract/program id, and any resolver-registry address used by the calling
+service. Registry addresses should be validated with the same chain-local
+address helper before service startup.
+
+## Chain-specific constraints
+
+| Chain | Timing | Wallet/account constraints | Settlement constraints |
+| --- | --- | --- | --- |
+| Ethereum | Source-side HTLCs use the longer refund window in the canonical flow. The contract stores an absolute `timelock` derived from `block.timestamp + timelockSeconds`. | Mutating calls require `walletClient.account`. ERC-20 orders require allowance for `amount` before `createOrder`; native ETH orders send `amount + safetyDeposit` as `msg.value`. | Native ETH uses `address(0)`. If a native payout push fails, funds move to pull-payment credit for the beneficiary/refund address. `claimOrder` accepts SDK sha256 hashlocks and the EVM dual-hash compatibility path. |
+| Stellar/Soroban | Ledgers are final once accepted. The destination leg normally uses the shorter 12h-style window so the resolver can refund before the user's source refund opens. | Signers receive XDR and must return signed XDR. Source accounts must exist and have sequence numbers available through Soroban RPC. | Asset ids are Stellar/Soroban addresses. Contract state has TTL/rent behavior; operators must keep deployed contract state alive. |
+| Solana | The SDK converts `timelockSeconds` to an absolute unix timestamp before building the Anchor instruction. | Signers expose a `PublicKey` and `signTransaction`. PDA derivation uses `[b"order", hashlock_bytes]`; duplicate hashlocks produce the same order PDA. | Mints are case-sensitive base58 public keys. `NATIVE_SOL_MINT` represents native SOL. `validateBeforeSubmit` can check account ownership and duplicate orders before sending. |
+
+Common recovery workflows:
+
+- Missing or malformed config: catch `SdkConfigurationError`, surface
+  `.issues`, and stop startup. Do not retry with defaults.
+- Unsupported source/destination pair: use `validateChainPair` or
+  `assertSupportedRoute` before wallet prompts. Show the route rejection reason.
+- Unsupported asset: use `assertSupported*` helpers before resolving assets.
+  The lenient `resolve*` functions still fall back to native assets for older
+  read paths and should not be used as the only validation before settlement.
+- Timelock expiry: users can refund source funds directly from the HTLC after
+  the source timelock; services are convenience layers, not custody points.
+
+See [../../docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md#cross-chain-invariants)
+for the protocol invariants behind timelock asymmetry, native payment fallback,
+and coordinator-independent settlement.
+
 ## Stability tiers
 
 | Tier | Surfaces | What it means |
@@ -143,12 +219,14 @@ so callers can use `instanceof` instead of parsing messages:
 
 | Error class | Thrown by | Meaning |
 | --- | --- | --- |
+| `SdkConfigurationError` | SDK config validators and chain-client constructors | Required runtime config is missing or malformed. Has `.issues[]` with `field`, `code`, and `message`. |
 | `CoordinatorValidationError` | `CoordinatorClient`, `validateAnnounceRequest` | Request was invalid and **never sent** — fix the input. Has `.field` and `.details`. |
 | `CoordinatorApiError` | `CoordinatorClient` | Coordinator responded with 4xx/5xx. Has `.status`, `.code` (stable machine-readable), and `.retryable`. |
 | `CoordinatorNetworkError` | `CoordinatorClient` | No response received (DNS/timeout/connection reset). Always safe to retry. |
 | `CoordinatorParseError` | `CoordinatorClient` | Response received but not valid JSON. |
 | `HTLCError` | All chain clients/adapters | Expected on-chain failure. Has `.code` (`wallet_unavailable`, `simulation_failed`, `tx_rejected`, `order_not_found`, `timelock_not_expired`, `invalid_preimage`, `simulation_mode`, `chain_error`) and `.retryable`. |
 | `UnsupportedAssetError` | `assertSupportedEthToStellar` and friends (`@wafflefinance/sdk/assets`) | No asset mapping exists for the given direction/network. Has `.asset`, `.network`, `.direction`. |
+| `InvalidAssetIdentifierError` | `toCanonicalId`, `assertCanonical*` helpers (`@wafflefinance/sdk/assets`) | A chain-local identifier is malformed before mapping lookup or contract use. |
 
 All coordinator errors extend `CoordinatorError`, so a single
 `catch (err) { if (err instanceof CoordinatorError) ... }` catches any of

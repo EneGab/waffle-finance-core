@@ -51,6 +51,10 @@
       "types": "./dist/routes/fee-policy.d.ts",
       "import": "./dist/routes/fee-policy.js"
     },
+    "./config-validation": {
+      "import": "./dist/config-validation.js",
+      "types": "./dist/config-validation.d.ts"
+    },
     "./htlc-client": {
       "types": "./dist/htlc-client.d.ts",
       "import": "./dist/htlc-client.js"

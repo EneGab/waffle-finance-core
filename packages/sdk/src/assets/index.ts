@@ -38,6 +38,17 @@ export class UnsupportedAssetError extends Error {
   }
 }
 
+export class InvalidAssetIdentifierError extends Error {
+  constructor(
+    public readonly chain: "ethereum" | "stellar" | "solana",
+    public readonly asset: string,
+    message: string,
+  ) {
+    super(`Invalid ${chain} asset identifier "${asset}": ${message}`);
+    this.name = "InvalidAssetIdentifierError";
+  }
+}
+
 // ── Static mapping tables ─────────────────────────────────────────────────
 
 const TESTNET_ETH_TO_STELLAR: Record<string, CanonicalStellarAsset> = {
@@ -157,6 +168,14 @@ export function normalizeEthereumAddress(address: string): string {
   return address.trim().toLowerCase();
 }
 
+export function assertCanonicalEthereumAddress(address: string): string {
+  const normalized = normalizeEthereumAddress(address);
+  if (!/^0x[0-9a-f]{40}$/.test(normalized)) {
+    throw new InvalidAssetIdentifierError("ethereum", address, "expected a 0x-prefixed 20-byte hex address");
+  }
+  return normalized;
+}
+
 /**
  * Produce the canonical string key for a Stellar asset:
  *   - Native XLM    →  `"XLM"`
@@ -173,12 +192,38 @@ export function normalizeStellarAssetKey(asset: string | CanonicalStellarAsset):
   return asset.issuer ? `${asset.code}:${asset.issuer}` : asset.code;
 }
 
+export function assertCanonicalStellarAssetKey(asset: string | CanonicalStellarAsset): string {
+  const key = normalizeStellarAssetKey(asset);
+  const parts = key.split(":");
+  const code = parts[0];
+  const issuer = parts[1];
+  if (parts.length === 1 && code === "XLM") return key;
+  if (
+    parts.length !== 2 ||
+    !code ||
+    code.length > 12 ||
+    !/^[A-Z0-9]+$/.test(code) ||
+    !/^G[A-Z2-7]{55}$/.test(issuer ?? "")
+  ) {
+    throw new InvalidAssetIdentifierError("stellar", key, "expected XLM or CODE:G... issuer key");
+  }
+  return key;
+}
+
 /**
  * Normalise a Solana mint address by trimming surrounding whitespace.
  * Solana base58 addresses are case-sensitive so no case folding is applied.
  */
 export function normalizeSolanaMint(mint: string): string {
   return mint.trim();
+}
+
+export function assertCanonicalSolanaMint(mint: string): string {
+  const normalized = normalizeSolanaMint(mint);
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(normalized)) {
+    throw new InvalidAssetIdentifierError("solana", mint, "expected a base58 public key");
+  }
+  return normalized;
 }
 
 // ── Boolean support guards ────────────────────────────────────────────────
@@ -490,5 +535,11 @@ export function toCanonicalId(
 ): string {
   const sym = symbol.toUpperCase();
   if (!address) return `${chain}:native:${sym}`;
-  return `${chain}:contract:${sym}:${address.toLowerCase()}`;
+  const canonicalAddress =
+    chain === "ethereum"
+      ? assertCanonicalEthereumAddress(address)
+      : chain === "stellar"
+        ? assertCanonicalStellarAssetKey(address)
+        : assertCanonicalSolanaMint(address);
+  return `${chain}:contract:${sym}:${canonicalAddress}`;
 }
