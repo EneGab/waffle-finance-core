@@ -80,6 +80,19 @@ export type {
   AccountValidationResult,
 } from "./account-validation.js";
 
+export {
+  getPhantomProvider,
+  formatSolanaAddress,
+  createPhantomSigner,
+  SolanaWalletLifecycleManager,
+  INITIAL_SOLANA_WALLET_STATE,
+  type PhantomSolanaProvider,
+  type SolanaConnectionPhase,
+  type SolanaWalletState,
+  type SolanaWalletErrorCode,
+  type SolanaWalletLifecycleOptions,
+} from "./wallet.js";
+
 /** 0x-prefixed hex string (mirrors viem's HexString). */
 type HexString = `0x${string}`;
 
