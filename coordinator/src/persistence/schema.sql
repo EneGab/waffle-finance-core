@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS orders (
     resolver_address      TEXT,
 
     -- Per-order reconciler high-water marks (see 011_order_ledger_cursors.sql).
+    -- These advance independently per chain as the reconciler processes events
+    -- so each order's scan window is as narrow as possible.
     last_eth_block        INTEGER,
     last_soroban_ledger   INTEGER,
     last_solana_slot      INTEGER,

@@ -27,6 +27,10 @@
       "types": "./dist/state-machine/index.d.ts",
       "import": "./dist/state-machine/index.js"
     },
+    "./status-display": {
+      "import": "./dist/status-display/index.js",
+      "types": "./dist/status-display/index.d.ts"
+    },
     "./solana": {
       "types": "./dist/solana/index.d.ts",
       "import": "./dist/solana/index.js"

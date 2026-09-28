@@ -44,6 +44,7 @@ If you add a new document, add a row here in the same PR.
 | `docs/RELEASE_CONTRACT.md` | current | Engineering | Per-package build target, artifact, environment assumptions, and verification gaps |
 | `docs/DEVELOPMENT.md` | current | Engineering | Local development setup, env vars, troubleshooting |
 | `docs/OPERATIONS.md` | current | Operations | Production operations: deployment topology, health endpoints, runbook pointers |
+| `docs/ALERTING.md` | current | Operations | **Alerting runbook** — Prometheus alert rules and operational thresholds for stale-order cleanup, expiry, and recovery metrics |
 | `docs/HEALTH_DASHBOARD.md` | current | Operations | Health and readiness endpoint reference for all services |
 | `docs/CONTRIBUTOR_HANDBOOK.md` | current | Engineering | Contribution guidelines, code review norms, branch strategy |
 | `docs/DEPENDENCY_POLICY.md` | current | Engineering | Dependency pinning policy, upgrade procedure, audit-critical packages |

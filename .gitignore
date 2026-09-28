@@ -187,6 +187,20 @@ __snapshots__/
 tmp/
 temp/
 
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Test snapshots
+**/__snapshots__/
+**/*.snap
+**/test-snapshots/
+
+# Local config files
+*.local
 # Test snapshots and artifacts
 **/__snapshots__/
 **/*.snap

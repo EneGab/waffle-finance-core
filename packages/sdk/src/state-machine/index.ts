@@ -1,6 +1,14 @@
 import type { OrderStatus } from "../types/index.js";
 
-const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+/**
+ * Canonical order lifecycle transition table.
+ *
+ * This is the single source of truth for which transitions an order may
+ * take. The coordinator's state machine (`order-machine.ts`) is pinned to
+ * this table by a conformance test, so a transition added here without
+ * being mirrored backend-side fails at test time instead of at runtime.
+ */
+export const ORDER_STATUS_TRANSITIONS: Record<OrderStatus, readonly OrderStatus[]> = {
   announced: ["src_locked", "cancelled", "abandoned", "failed", "expired"],
   src_locked: ["dst_locked", "secret_revealed", "refunded", "failed", "expired"],
   dst_locked: ["secret_revealed", "refunded", "failed", "expired"],
@@ -12,6 +20,8 @@ const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   cancelled: [],
   abandoned: [],
 };
+
+const TRANSITIONS = ORDER_STATUS_TRANSITIONS as Record<OrderStatus, OrderStatus[]>;
 
 export class InvalidTransitionError extends Error {
   constructor(public readonly from: OrderStatus, public readonly to: OrderStatus) {
