@@ -55,6 +55,20 @@ import {
   type AssetMappingNetwork,
 } from "../assets/index.js";
 
+// #731: the fee policy is part of the route registry's public surface — the
+// root barrel (`src/index.ts`) and the `./routes` subpath both re-export these
+// names from here. Without this pass-through `dist/index.js` imports symbols
+// `dist/routes/index.js` does not export, which is an ESM link error for every
+// consumer of `@wafflefinance/sdk` and not merely a type error.
+export {
+  estimateRouteFee,
+  getRouteFeePolicy,
+  ROUTE_FEE_POLICIES,
+  type RouteFeeEstimate,
+  type RouteFeeFixture,
+  type RouteFeePolicy,
+} from "./fee-policy.js";
+
 // ── Axis 1: chain direction ──────────────────────────────────────────────────
 
 /**
