@@ -574,6 +574,7 @@ export class Reconciler {
         }
 
         await this.orders.recordSrcLock({
+          actor: "reconciler",
           publicId: order.publicId,
           orderId: args.orderId.toString(),
           txHash: log.transactionHash ?? "0x",
@@ -670,7 +671,7 @@ export class Reconciler {
           continue;
         }
 
-        await this.orders.recordSecret(order.publicId, args.preimage, log.transactionHash ?? "0x");
+        await this.orders.recordSecret(order.publicId, args.preimage, log.transactionHash ?? "0x", null, "reconciler");
         await this.advanceOrderCursor(order.publicId, "ethereum", blockNum);
         n++;
         reconciliationRestartRecoveryEvents.inc({ chain: "ethereum" });
@@ -754,7 +755,7 @@ export class Reconciler {
           continue;
         }
 
-        await this.orders.markStatus(order.publicId, "refunded");
+        await this.orders.markStatus(order.publicId, "refunded", "reconciler");
         await this.advanceOrderCursor(order.publicId, "ethereum", blockNum);
         n++;
         reconciliationRestartRecoveryEvents.inc({ chain: "ethereum" });
@@ -895,6 +896,7 @@ export class Reconciler {
           return 0;
         }
         await this.orders.recordSrcLock({
+          actor: "reconciler",
           publicId: order.publicId,
           orderId: result.orderId.toString(),
           txHash: ev.txHash,
@@ -951,7 +953,7 @@ export class Reconciler {
           await this.advanceOrderCursor(order.publicId, "stellar", ev.ledger);
           return 0;
         }
-        await this.orders.recordSecret(order.publicId, result.preimage, ev.txHash);
+        await this.orders.recordSecret(order.publicId, result.preimage, ev.txHash, null, "reconciler");
         await this.advanceOrderCursor(order.publicId, "stellar", ev.ledger);
         reconciliationRestartRecoveryEvents.inc({ chain: "stellar" });
         this.log.info({ orderId: result.orderId.toString() }, "reconciler: replayed Soroban claimed");
@@ -999,7 +1001,7 @@ export class Reconciler {
           }
           return 0;
         }
-        await this.orders.markStatus(order.publicId, "refunded");
+        await this.orders.markStatus(order.publicId, "refunded", "reconciler");
         await this.advanceOrderCursor(order.publicId, "stellar", ev.ledger);
         reconciliationRestartRecoveryEvents.inc({ chain: "stellar" });
         this.log.info({ orderId: result.orderId.toString() }, "reconciler: replayed Soroban refunded");
@@ -1143,7 +1145,7 @@ export class Reconciler {
           }
           return 0;
         }
-        await this.orders.recordSrcLock({ publicId: order.publicId, orderId, txHash: sig, blockNumber: slot, timelock: timelock ?? 0 });
+        await this.orders.recordSrcLock({ actor: "reconciler", publicId: order.publicId, orderId, txHash: sig, blockNumber: slot, timelock: timelock ?? 0 });
         await this.advanceOrderCursor(order.publicId, "solana", slot);
         reconciliationRestartRecoveryEvents.inc({ chain: "solana" });
         return 1;
@@ -1198,7 +1200,7 @@ export class Reconciler {
           await this.advanceOrderCursor(order.publicId, "solana", slot);
           return 0;
         }
-        await this.orders.recordSecret(order.publicId, preimage, sig);
+        await this.orders.recordSecret(order.publicId, preimage, sig, null, "reconciler");
         await this.advanceOrderCursor(order.publicId, "solana", slot);
         reconciliationRestartRecoveryEvents.inc({ chain: "solana" });
         return 1;
@@ -1250,7 +1252,7 @@ export class Reconciler {
           }
           return 0;
         }
-        await this.orders.markStatus(order.publicId, "refunded");
+        await this.orders.markStatus(order.publicId, "refunded", "reconciler");
         await this.advanceOrderCursor(order.publicId, "solana", slot);
         reconciliationRestartRecoveryEvents.inc({ chain: "solana" });
         return 1;
