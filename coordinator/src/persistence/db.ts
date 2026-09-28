@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -42,7 +42,8 @@ export class MigrationValidationError extends Error {
       | "MISSING_MIGRATIONS"
       | "EXTRA_MIGRATIONS"
       | "OUT_OF_ORDER"
-      | "VERSION_MISMATCH",
+      | "VERSION_MISMATCH"
+      | "REGISTRY_DRIFT",
     public readonly detail?: {
       expected?: readonly string[];
       applied?: string[];
@@ -439,6 +440,11 @@ export async function validateSchemaVersion(db: Database): Promise<void> {
  *         which the caller may safely retry with backoff.
  */
 export async function openDatabase(url: string): Promise<Database> {
+  // Fail fast on registry/code drift BEFORE touching the database: if the
+  // migration registry or its files are inconsistent, no connection will fix
+  // it and it must be caught before deployment, not after.
+  validateMigrationRegistry();
+
   const db =
     url.startsWith("postgres://") || url.startsWith("postgresql://")
       ? await openPostgresDatabase(url)
@@ -606,4 +612,229 @@ function loadMigrationFile(migrationsDir: string, file: string): string {
         `Ensure the file exists under coordinator/migrations/.`
     );
   }
+}
+
+// ── Migration registry drift validation ───────────────────────────────────────
+//
+// `validateSchemaVersion` (above) checks the *database's recorded history*
+// against the expected list.  That catches a deployment whose DB is ahead of /
+// behind the binary, but it cannot catch a registry that has silently drifted
+// from the migration files on disk — e.g. a new `013_*.sql` added to
+// coordinator/migrations/ without being added to SQLITE_MIGRATIONS /
+// POSTGRES_MIGRATION_FILES / CURRENT_SCHEMA_VERSION (or the reverse).  Such a
+// drift would produce an incompatible schema on a fresh install while every
+// existing database still validates green.
+//
+// `validateMigrationRegistry` closes that gap by running BEFORE any per-DB
+// check: it validates that the registry itself is internally consistent and
+// matches the files on disk.  It is pure/static — no DB connection required —
+// so drift is caught before it ever reaches production.
+
+/**
+ * Parse the canonical numeric prefix out of a migration file name.
+ * Returns `NaN` for names that do not start with `^\d+_`.
+ */
+export function migrationNumber(name: string): number {
+  const m = /^(\d+)_/.exec(name);
+  return m ? Number(m[1]) : Number.NaN;
+}
+
+/** True when `name` is a plausible migration file name (`^\d+_.*\.sql$`). */
+export function isMigrationFileName(name: string): boolean {
+  return /^\d+_.*\.sql$/.test(name);
+}
+
+/**
+ * Validate that a migration-name list has *non-decreasing* numeric prefixes and
+ * every entry is well-formed.
+ *
+ * Duplicate numbers are permitted ONLY when they are consecutive in the list —
+ * the repository already uses this convention for "patch" migrations that share
+ * a base number (e.g. `005_cursor_pagination.sql` then `005_schema_migrations.sql`).
+ * A number that reappears after a number it precedes (i.e. the sequence ever
+ * decreases, such as `005, 006, 005`) is a misordered registry and rejected.
+ *
+ * @throws MigrationValidationError with code REGISTRY_DRIFT.
+ */
+export function validateMigrationSequence(
+  files: readonly string[],
+  listName: string
+): void {
+  let previous = -1;
+  for (const file of files) {
+    if (!isMigrationFileName(file)) {
+      throw new MigrationValidationError(
+        `Schema validation failed: ${listName} entry '${file}' is not a valid ` +
+          `migration file name (expected ^\\d+_.*\\.sql$).`,
+        "REGISTRY_DRIFT",
+        { expected: [...files] }
+      );
+    }
+    const n = migrationNumber(file);
+    if (n < previous) {
+      throw new MigrationValidationError(
+        `Schema validation failed: ${listName} migrations are not in numeric-prefix ` +
+          `order — '${file}' number ${n} follows a higher number (${previous}). ` +
+          `Found: [${files.join(" → ")}].`,
+        "REGISTRY_DRIFT",
+        { expected: [...files] }
+      );
+    }
+    previous = n;
+  }
+
+  // Sanity backstop: the same file listed twice is always a registry bug.
+  const seen = new Set<string>();
+  for (const file of files) {
+    if (seen.has(file)) {
+      throw new MigrationValidationError(
+        `Schema validation failed: ${listName} lists '${file}' more than once.`,
+        "REGISTRY_DRIFT",
+        { expected: [...files] }
+      );
+    }
+    seen.add(file);
+  }
+}
+
+/**
+ * Absolute path to the coordinator's `migrations/` directory.
+ */
+export function getMigrationsDir(): string {
+  return resolve(__dirname, "..", "..", "migrations");
+}
+
+/**
+ * A structured report of the registry-vs-disk conformance checks.
+ * Drift surfaces as named fields so both operator scripts and tests can
+ * consume it deterministically.
+ */
+export interface MigrationDriftReport {
+  sqliteSequenceValid: boolean;
+  postgresSequenceValid: boolean;
+  versionAligned: boolean;
+  registeredFilesMissingOnDisk: string[];
+  unregisteredFilesOnDisk: string[];
+  currentSchemaVersion: string;
+  sqliteLatest: string;
+  postgresLatest: string;
+}
+
+/**
+ * Validate the in-code migration registry against itself and against the
+ * migration files on disk.  This is the "drift" guard for issue #48:
+ * a misordered migration, or a schema change that was not wired through the
+ * registry, is caught before deployment rather than at runtime on an existing
+ * database.
+ *
+ * Checks performed:
+ *   1. SQLite and Postgres sequences are well-formed + strictly ordered.
+ *   2. `CURRENT_SCHEMA_VERSION` matches the latest entry of BOTH lists.
+ *   3. Every registered migration file exists on disk (Postgres entries fall
+ *      back to their generic `*_postgres.sql → *.sql` counterpart, matching
+ *      `loadMigrationFile`).
+ *   4. Every numbered `*.sql` file present on disk is registered in at least
+ *      one of the two lists (catches "forgot to register").
+ *
+ * @throws MigrationValidationError with code REGISTRY_DRIFT (wrapped in
+ *         FatalStartupError) when the registry is inconsistent.
+ * @returns The conformance report on success.
+ */
+export function validateMigrationRegistry(
+  migrationsDir: string = getMigrationsDir()
+): MigrationDriftReport {
+  const errors: string[] = [];
+  const detail: { expected?: readonly string[] } = {};
+
+  // 1. Sequence validity.
+  try {
+    validateMigrationSequence([...SQLITE_MIGRATIONS], "SQLITE_MIGRATIONS");
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err));
+  }
+  try {
+    validateMigrationSequence([...POSTGRES_MIGRATION_FILES], "POSTGRES_MIGRATION_FILES");
+  } catch (err) {
+    errors.push(err instanceof Error ? err.message : String(err));
+  }
+
+  const sqliteLatest = [...SQLITE_MIGRATIONS].at(-1) ?? "";
+  const postgresLatest = [...POSTGRES_MIGRATION_FILES].at(-1) ?? "";
+  // Postgres lists use the `*_postgres.sql` name for their final variant; a
+  // version is "aligned" when it names the same logical migration, so compare
+  // against the _postgres-stripped canonical form.
+  const postgresLatestCanonical = postgresLatest.replace("_postgres.sql", ".sql");
+  const versionAligned =
+    CURRENT_SCHEMA_VERSION === sqliteLatest &&
+    CURRENT_SCHEMA_VERSION === postgresLatestCanonical;
+  if (!versionAligned) {
+    errors.push(
+      `CURRENT_SCHEMA_VERSION ('${CURRENT_SCHEMA_VERSION}') does not match the ` +
+        `latest registered migration (sqlite: '${sqliteLatest}', postgres: '${postgresLatest}').`
+    );
+  }
+  detail.expected = [...SQLITE_MIGRATIONS];
+
+  // 3. Every registered name is loadable from disk (with the Postgres fallback).
+  const registeredMissing: string[] = [];
+  for (const file of [...SQLITE_MIGRATIONS, ...POSTGRES_MIGRATION_FILES]) {
+    const genericName = file.replace("_postgres.sql", ".sql");
+    const primaryExists = fileExists(resolve(migrationsDir, file));
+    const fallbackExists =
+      genericName !== file && fileExists(resolve(migrationsDir, genericName));
+    if (!primaryExists && !fallbackExists) registeredMissing.push(file);
+  }
+  if (registeredMissing.length > 0) {
+    errors.push(
+      `Registered migration files missing on disk: [${registeredMissing.join(", ")}].`
+    );
+  }
+
+  // 4. Every numbered .sql file on disk is registered in at least one list.
+  const registered = new Set<string>([...SQLITE_MIGRATIONS, ...POSTGRES_MIGRATION_FILES]);
+  const unregistered = listMigrationFiles(migrationsDir).filter((f) => !registered.has(f));
+  if (unregistered.length > 0) {
+    errors.push(
+      `Migration file(s) on disk not present in SQLITE_MIGRATIONS / ` +
+        `POSTGRES_MIGRATION_FILES: [${unregistered.join(", ")}]. ` +
+        `Register them and bump CURRENT_SCHEMA_VERSION before deploying.`
+    );
+  }
+
+  if (errors.length > 0) {
+    const inner = new MigrationValidationError(
+      `Schema validation failed: ${errors.join(" ")}`,
+      "REGISTRY_DRIFT",
+      detail
+    );
+    throw new FatalStartupError(inner.message, inner);
+  }
+
+  return {
+    sqliteSequenceValid: true,
+    postgresSequenceValid: true,
+    versionAligned,
+    registeredFilesMissingOnDisk: registeredMissing,
+    unregisteredFilesOnDisk: unregistered,
+    currentSchemaVersion: CURRENT_SCHEMA_VERSION,
+    sqliteLatest,
+    postgresLatest,
+  };
+}
+
+/** True when `path` exists on disk and is a regular file / symlink. */
+function fileExists(path: string): boolean {
+  try {
+    readFileSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** List `*.sql` migration files under `dir`, sorted by name. */
+export function listMigrationFiles(dir: string): string[] {
+  return readdirSync(dir)
+    .filter((f) => isMigrationFileName(f))
+    .sort();
 }

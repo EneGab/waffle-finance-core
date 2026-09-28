@@ -105,6 +105,20 @@ export function ordersRoutes(orders: OrderService, log?: Logger, abuseDetector?:
     abuseDetector
   });
 
+  // 240 status reads per IP per minute.  Status polling (history + detail)
+  // is the most frequently hit surface of the coordinator, so it gets its own
+  // dedicated bucket rather than sharing the announce or secret budgets.
+  // Resolvers presenting a valid API key bypass this limit entirely.
+  const statusQueryRateLimit = makeRateLimiter({
+    windowMs: 60_000,
+    max: 240,
+    name: "orders/status",
+    log,
+    apiKeys,
+    trustedProxies,
+    abuseDetector
+  });
+
   router.post("/orders/announce", announceRateLimit, async (req, res, next) => {
     try {
       const parsed = announceSchema.parse(req.body);
@@ -125,7 +139,7 @@ export function ordersRoutes(orders: OrderService, log?: Logger, abuseDetector?:
 
   // NOTE: the literal /orders/history route must be registered before the
   // /orders/:id param route, otherwise Express matches "history" as an :id.
-  router.get("/orders/history", async (req, res, next) => {
+  router.get("/orders/history", statusQueryRateLimit, async (req, res, next) => {
     const parsedAddress = historyAddressSchema.safeParse(req.query.address);
     if (!parsedAddress.success) {
       res.status(400).json(validationError(parsedAddress.error.errors));
@@ -184,7 +198,7 @@ export function ordersRoutes(orders: OrderService, log?: Logger, abuseDetector?:
     }
   });
 
-  router.get("/orders/:id", async (req, res, next) => {
+  router.get("/orders/:id", statusQueryRateLimit, async (req, res, next) => {
     const idResult = orderIdSchema.safeParse(req.params.id);
     if (!idResult.success) {
       res.status(400).json(validationError(idResult.error.errors));
