@@ -206,4 +206,6 @@ docker-compose.override.yml
 # Misc
 AGENTS.md
 .kilocode/
- 
+
+# Local PR description files (generated, not for version control)
+PR_*.md
