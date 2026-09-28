@@ -460,6 +460,7 @@ export class SolanaListener {
           });
           if (!decision.shouldApply) return;
           await this.orders.recordSrcLock({
+            actor: "solana_listener",
             publicId: order.publicId,
             orderId,
             txHash: sig,
@@ -500,7 +501,7 @@ export class SolanaListener {
                 outcome: decision.reason,
               });
               if (!decision.shouldApply) return;
-              await this.orders.recordSecret(order.publicId, preimage, sig);
+              await this.orders.recordSecret(order.publicId, preimage, sig, null, "solana_listener");
               this.markSigProcessed(sig);
             }
           } catch (err) {
@@ -530,7 +531,7 @@ export class SolanaListener {
                 outcome: decision.reason,
               });
               if (!decision.shouldApply) return;
-              await this.orders.markStatus(order.publicId, "refunded");
+              await this.orders.markStatus(order.publicId, "refunded", "solana_listener");
               this.markSigProcessed(sig);
             }
           } catch (err) {
