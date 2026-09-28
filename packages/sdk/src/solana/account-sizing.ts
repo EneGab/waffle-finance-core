@@ -40,7 +40,7 @@
  * and tests only. Production code must always call the cluster.
  */
 
-import { PublicKey, type Connection, type AccountInfo } from "@solana/web3.js";
+import { PublicKey, type Commitment, type Connection, type AccountInfo } from "@solana/web3.js";
 
 // This module is deliberately dependency-free within the Solana surface: it
 // imports nothing from `./idl/*`. The IDL modules import *from here* to derive
@@ -662,7 +662,7 @@ export async function verifyInitialisedAccount(
     /** Owner the account must have; normally the HTLC program id. */
     expectedOwner: PublicKey;
     /** Commitment to read at. */
-    commitment?: "processed" | "confirmed" | "finalized";
+    commitment?: Commitment;
     /** Extra lamports the account is expected to hold beyond rent. */
     expectedExtraLamports?: bigint;
   }
@@ -751,11 +751,17 @@ export async function verifyInitialisedAccount(
 
 // ── Simulation ──────────────────────────────────────────────────────────────
 
-/** Shape of the pieces of `simulate()` this module needs. */
+/**
+ * A transaction `simulateTransaction` accepts: either the legacy
+ * `Transaction` or a versioned one.
+ */
+export type SimulatableTransaction =
+  | Parameters<Connection["simulateTransaction"]>[0]
+  | Parameters<Connection["simulateTransaction"]>[1];
+
+/** The subset of `Connection` this module needs to simulate. */
 export interface SimulationCapableConnection {
-  simulateTransaction(
-    transaction: Parameters<Connection["simulateTransaction"]>[0]
-  ): Promise<{ value: { err: unknown; logs: string[] | null } }>;
+  simulateTransaction(transaction: SimulatableTransaction): Promise<unknown>;
 }
 
 function formatSimulationErr(err: unknown): string {
@@ -789,30 +795,39 @@ function formatSimulationErr(err: unknown): string {
  */
 export async function simulateTransactionOrThrow(
   connection: SimulationCapableConnection,
-  transaction: Parameters<Connection["simulateTransaction"]>[0],
+  transaction: SimulatableTransaction,
   options: { account: string }
 ): Promise<string[]> {
-  let result: { value: { err: unknown; logs: string[] | null } };
+  let raw: unknown;
   try {
-    result = await connection.simulateTransaction(transaction);
+    raw = await connection.simulateTransaction(transaction);
   } catch (err) {
     // An RPC-level failure is not a program failure, but it must not be
     // mistaken for success either — rethrow with the RPC message attached.
     throw new AccountInitVerificationError(
-      `Failed to simulate the transaction that creates ${options.account}: ` +
+      `Failed to simulate the transaction for ${options.account}: ` +
       `${err instanceof Error ? err.message : String(err)}. ` +
       `The transaction was not submitted.`,
-      { account: options.account, rpcError: err instanceof Error ? err.message : String(err) },
-      undefined
+      { account: options.account, rpcError: err instanceof Error ? err.message : String(err) }
     );
   }
 
-  const logs = result.value.logs ?? [];
-  if (result.value.err) {
+  // `simulateTransaction` has two response shapes: the legacy `Transaction`
+  // overload resolves to the response directly, the versioned one wraps it in
+  // `{ context, value }`. Normalise before reading.
+  const value =
+    raw !== null && typeof raw === "object" && "value" in (raw as Record<string, unknown>)
+      ? ((raw as { value: { err: unknown; logs: string[] | null } }).value)
+      : (raw as { err: unknown; logs: string[] | null });
+
+  const logs = value?.logs ?? [];
+  if (value?.err) {
     throw new AccountInitVerificationError(
-      `Simulation failed for ${options.account}: ${formatSimulationErr(result.value.err)}` +
-      (logs.length > 0 ? `\nProgram logs:\n  ${logs.join("\n  ")}` : "\nProgram logs: (none returned)"),
-      { account: options.account, simulationError: formatSimulationErr(result.value.err) },
+      `Simulation failed for ${options.account}: ${formatSimulationErr(value.err)}` +
+      (logs.length > 0
+        ? `\nProgram logs:\n  ${logs.join("\n  ")}`
+        : "\nProgram logs: (none returned)"),
+      { account: options.account, simulationError: formatSimulationErr(value.err) },
       logs
     );
   }

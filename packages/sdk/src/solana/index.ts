@@ -67,6 +67,19 @@ import {
   validateRefundOrderParams,
   AccountValidationError,
 } from "./account-validation.js";
+
+// Account sizing / rent / init safety rails.
+import {
+  assertAccountIsUninitialised,
+  assertPayerCanFund,
+  classifyUninitialisedAccount,
+  getRentExemptMinimum,
+  simulateTransactionOrThrow,
+  verifyInitialisedAccount,
+  type SimulatableTransaction,
+  type SimulationCapableConnection,
+  type VerifiedAccount,
+} from "./account-sizing.js";
 import { validateRpcUrl, validateSolanaAddress } from "../config-validation.js";
 
 export {
@@ -75,6 +88,56 @@ export {
   validateRefundOrderParams,
   AccountValidationError,
 } from "./account-validation.js";
+
+// Account sizing, rent, and initialisation safety rails. Re-exported here so
+// a service only needs the `/solana` entrypoint to size, fund, and verify an
+// account correctly.
+export {
+  ANCHOR_DISCRIMINATOR_SIZE,
+  SOLANA_ANCHOR_ACCOUNT_LAYOUTS,
+  SOLANA_TYPE_SIZES,
+  MAINNET_RENT,
+  accountSizeFor,
+  fieldsSizeFor,
+  validateAccountLayouts,
+  assertAccountSize,
+  getRentExemptMinimum,
+  rentExemptMinimumFor,
+  referenceRentExemptMinimum,
+  transactionFee,
+  assertPayerCanFund,
+  classifyUninitialisedAccount,
+  assertAccountIsUninitialised,
+  verifyInitialisedAccount,
+  simulateTransactionOrThrow,
+  SolanaAccountInitError,
+  InvalidAccountSizeError,
+  InsufficientRentError,
+  AccountAlreadyInitializedError,
+  UnexpectedAccountBalanceError,
+  AccountInitVerificationError,
+} from "./account-sizing.js";
+export type {
+  AccountFieldSpec,
+  AccountLayoutSpec,
+  SolanaAccountLayoutName,
+  SolanaAccountInitErrorCode,
+  PayerFundingRequest,
+  UninitialisedState,
+  VerifiedAccount,
+  SimulatableTransaction,
+  SimulationCapableConnection,
+} from "./account-sizing.js";
+
+export {
+  ORDER_REGISTRY_ACCOUNT_SIZE,
+  ORDER_REGISTRY_DISCRIMINATOR,
+  ORDER_REGISTRY_SEED,
+  REGISTRY_FIELD_OFFSET,
+  REGISTRY_IDL_VERSION,
+  readOrderCount,
+} from "./idl/registry.js";
+
 export type {
   AccountValidationCode,
   AccountValidationResult,
@@ -110,6 +173,26 @@ export interface SolanaHTLCClientOptions {
    * Default: false.
    */
   allowHttp?: boolean;
+  /**
+   * Account-initialisation robustness.  These are the safety rails that stop a
+   * mis-sized or under-funded account from failing silently:
+   *
+   *  • `simulateBeforeSend` (default **true**) — run `simulate()` before
+   *    submitting and attach the program logs to any error.  Without it a
+   *    failed `create_order` surfaces as a bare "Custom program error: 0x…"
+   *    with no indication of which on-chain check rejected it.
+   *  • `verifyAfterInit` (default **true**) — after the transaction confirms,
+   *    re-read the created account and check it exists, is owned by the HTLC
+   *    program, has the exact declared data length, and is at or above the
+   *    rent-exempt minimum.  A confirmed transaction is not proof of a correct
+   *    account.
+   *
+   * Setting either to false restores the previous fire-and-forget behaviour and
+   * is only appropriate in tests against mocked connections that do not
+   * implement `simulateTransaction`.
+   */
+  simulateBeforeSend?: boolean;
+  verifyAfterInit?: boolean;
 }
 
 export interface SolanaCreateOrderInput {
@@ -419,6 +502,8 @@ export class SolanaHTLCClient {
   private readonly simulation: boolean;
   private readonly programPk: PublicKey | null;
   private readonly validateBeforeSubmit: boolean;
+  private readonly simulateBeforeSend: boolean;
+  private readonly verifyAfterInit: boolean;
 
   constructor(opts: SolanaHTLCClientOptions) {
     const rpcUrl = validateRpcUrl(opts.rpcUrl, "solana.rpcUrl", {
@@ -430,6 +515,8 @@ export class SolanaHTLCClient {
     this.commitment = opts.commitment ?? "confirmed";
     this.connection = new Connection(rpcUrl, this.commitment);
     this.validateBeforeSubmit = opts.validateBeforeSubmit ?? false;
+    this.simulateBeforeSend = opts.simulateBeforeSend ?? true;
+    this.verifyAfterInit = opts.verifyAfterInit ?? true;
 
     // Enter simulation mode only when no real program id is configured.
     this.simulation = simulation;
@@ -503,11 +590,21 @@ export class SolanaHTLCClient {
   async createOrder(
     input: SolanaCreateOrderInput,
     signer: SolanaSigner
-  ): Promise<{ txSignature: TransactionSignature; orderId: string }> {
+  ): Promise<{ txSignature: TransactionSignature; orderId: string; account: VerifiedAccount }> {
     if (this.simulation) {
       const mockSig = "SIMULATION_" + input.hashlockHex.slice(2, 18);
       console.warn("[SolanaHTLCClient] simulation createOrder →", mockSig);
-      return { txSignature: mockSig, orderId: "sim-" + input.hashlockHex.slice(2, 18) };
+      return {
+        txSignature: mockSig,
+        orderId: "sim-" + input.hashlockHex.slice(2, 18),
+        account: {
+          address: "sim-" + input.hashlockHex.slice(2, 18),
+          owner: "simulation",
+          dataLength: HTLC_ORDER_ACCOUNT_SIZE,
+          lamports: 0n,
+          rentExemptMinimum: 0n,
+        },
+      };
     }
 
     const programPk = this.programPk!;
@@ -540,7 +637,21 @@ export class SolanaHTLCClient {
       }
     }
 
-    const { instruction, orderPda } = buildCreateOrderInstruction(programPk, {
+    // ── Preflight: rent, payer solvency, uninitialised target ──────────────
+    // Runs before the transaction is built, so a mis-sized or under-funded
+    // order fails here with a diagnostic naming the account and the shortfall
+    // rather than as an opaque runtime error after fees are spent.
+    const [orderPda] = deriveOrderPda(hashlockBytes, programPk);
+    const isNativeSol = input.mint === NATIVE_SOL_MINT;
+    await this._preflightCreateOrder({
+      programPk,
+      orderPda,
+      payer: signer.publicKey,
+      amount: isNativeSol ? input.amount : 0n,
+      safetyDeposit: input.safetyDeposit,
+    });
+
+    const { instruction } = buildCreateOrderInstruction(programPk, {
       payer:         signer.publicKey,
       beneficiary:   new PublicKey(input.beneficiary),
       refundAddress: new PublicKey(input.refundAddress),
@@ -552,7 +663,73 @@ export class SolanaHTLCClient {
     });
 
     const sig = await this._buildSignSend([instruction], signer);
-    return { txSignature: sig, orderId: orderPda.toBase58() };
+
+    // ── Post-init verification ────────────────────────────────────────────
+    const account = this.verifyAfterInit
+      ? await verifyInitialisedAccount(this.connection, orderPda, "htlcOrder", {
+          expectedOwner: programPk,
+          commitment: this.commitment,
+        })
+      : ({
+          address: orderPda.toBase58(),
+          owner: programPk.toBase58(),
+          dataLength: HTLC_ORDER_ACCOUNT_SIZE,
+          lamports: 0n,
+          rentExemptMinimum: 0n,
+        } as VerifiedAccount);
+
+    return { txSignature: sig, orderId: orderPda.toBase58(), account };
+  }
+
+  /**
+   * Everything that must be true before a `create_order` is worth submitting:
+   * the rent-exempt minimum is computed from the real account size, the payer
+   * is solvent for rent + amount + deposit + fee, and the target PDA is in a
+   * state the program's `init` can legally act on.
+   *
+   * Each failure throws a typed `SolanaAccountInitError` carrying the account,
+   * the expected value, and the observed value.
+   */
+  private async _preflightCreateOrder(args: {
+    programPk: PublicKey;
+    orderPda: PublicKey;
+    payer: PublicKey;
+    amount: bigint;
+    safetyDeposit: bigint;
+  }): Promise<{ rentLamports: bigint }> {
+    const account = args.orderPda.toBase58();
+
+    // 1. Rent exemption, from the real account size and the cluster's table.
+    const rentLamports = await getRentExemptMinimum(
+      this.connection,
+      HTLC_ORDER_ACCOUNT_SIZE
+    );
+
+    // 2. Payer solvency, including rent and the transaction fee.
+    const balanceLamports = BigInt(
+      await this.connection.getBalance(args.payer, this.commitment)
+    );
+    assertPayerCanFund({
+      payer: args.payer,
+      account,
+      rentLamports,
+      amountLamports: args.amount,
+      safetyDepositLamports: args.safetyDeposit,
+      signatureCount: 1,
+      balanceLamports,
+    });
+
+    // 3. The PDA must not already hold an initialised (or pre-funded) account.
+    //    `getAccountInfo` returns null for a zero-lamport account, so a PDA
+    //    that was pre-funded with a stray transfer is indistinguishable from
+    //    "absent" unless it is classified explicitly.
+    const existing = await this.connection.getAccountInfo(args.orderPda, this.commitment);
+    assertAccountIsUninitialised(
+      classifyUninitialisedAccount(existing as never, args.programPk),
+      { account, programId: args.programPk.toBase58() }
+    );
+
+    return { rentLamports };
   }
 
   /**
@@ -662,7 +839,16 @@ export class SolanaHTLCClient {
 
   // ── Private helpers ───────────────────────────────────────────────────────
 
-  /** Fetch a recent blockhash, build, sign, send, and confirm a transaction. */
+  /**
+   * Fetch a recent blockhash, build, sign, simulate, send, and confirm.
+   *
+   * The simulation is explicit rather than left to `sendRawTransaction`'s
+   * implicit preflight: the implicit one throws without exposing the program
+   * logs, so a rejected `create_order` arrives as an opaque "Custom program
+   * error: 0x…" and there is no way to tell an under-funded payer from a
+   * mis-sized account from a timelock violation. Simulating first puts the
+   * logs in the thrown error.
+   */
   private async _buildSignSend(
     instructions: TransactionInstruction[],
     signer: SolanaSigner
@@ -671,6 +857,15 @@ export class SolanaHTLCClient {
     const tx = new Transaction({ recentBlockhash: blockhash, feePayer: signer.publicKey });
     tx.add(...instructions);
     const signed = await signer.signTransaction(tx);
+
+    if (this.simulateBeforeSend) {
+      await simulateTransactionOrThrow(
+        this.connection as unknown as SimulationCapableConnection,
+        signed as unknown as SimulatableTransaction,
+        { account: signer.publicKey.toBase58() }
+      );
+    }
+
     const sig = await this.connection.sendRawTransaction(signed.serialize());
     await this.connection.confirmTransaction(sig, this.commitment);
     return sig;
