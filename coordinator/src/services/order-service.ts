@@ -22,6 +22,7 @@ import {
   recordPhaseDwell,
   recordSwapCompletion,
   refreshPhaseRatios,
+  expiredOrdersBacklog,
 } from "../metrics.js";
 import { announceSchema, type AnnounceInput } from "../validation/announce.js";
 import { HistoryCache } from "./history-cache.js";
@@ -138,6 +139,14 @@ function recordTransition(
   _incrementPhaseSnapshot(direction, from, -1);
   _incrementPhaseSnapshot(direction, to, +1);
   refreshPhaseRatios(direction, _directionCounts(direction));
+
+  // Publish the expired-order backlog (orders whose timelock has elapsed and
+  // that are awaiting refund/failure) straight from the snapshot — no extra
+  // DB query, always in sync with `order_current_state{state="expired"}`.
+  expiredOrdersBacklog.set(
+    { direction },
+    _phaseCountSnapshot.get(_snapshotKey(direction, "expired")) ?? 0
+  );
 }
 
 export class OrderService {
@@ -561,7 +570,14 @@ export class OrderService {
     this.historyCache.invalidateAddress(order.srcAddress);
     this.historyCache.invalidateAddress(order.dstAddress);
 
-    const eventType = status === "refunded" ? "order.refunded" : status === "completed" ? "order.completed" : status === "expired" ? "order.expired" : "order.status_changed";
+    const eventType =
+      status === "refunded"
+        ? "order.refunded"
+        : status === "completed"
+          ? "order.completed"
+          : status === "expired"
+            ? "order.expired"
+            : "order.failed";
     this.audit(
       buildOrderAuditEntry(eventType, {
         orderId: publicId,

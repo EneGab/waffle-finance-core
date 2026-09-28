@@ -437,7 +437,9 @@ export const reconciliationAmbiguousStates = new Counter({
 export const workflowDispatchDecisions = new Counter({
   name: 'coordinator_workflow_dispatch_decisions_total',
   help: 'Event dispatch decisions by path, mutation, and outcome',
-  labelNames: ['path', 'mutation', 'outcome'] as const,
+  // Label order is alphabetical so Prometheus output matches the canonical
+  // `{mutation, outcome, path}` rendering asserted in tests and dashboards.
+  labelNames: ['mutation', 'outcome', 'path'] as const,
   registers: [registry],
 });
 
@@ -474,6 +476,65 @@ export const staleCleanupAlreadyArchivedSkipped = new Counter({
 export const staleCleanupLastRun = new Gauge({
   name: 'coordinator_stale_cleanup_last_run_timestamp_seconds',
   help: 'Unix timestamp of the most recent stale order cleanup run (archival of orphaned announced orders)',
+  registers: [registry],
+});
+
+/**
+ * Stale-order BACKLOG size, by direction.
+ *
+ * Set by the stale cleanup service at the start of every run to the number of
+ * orphaned announced orders (no src lock within the retention window) that are
+ * awaiting cleanup.  This is the primary backlog-growth signal: alert when it
+ * climbs above the threshold below to learn that orphaned announcements are
+ * outpacing cleanup — or that the cleanup job has stopped running.
+ */
+export const staleCleanupBacklog = new Gauge({
+  name: 'coordinator_stale_cleanup_backlog',
+  help: 'Stale announced orders awaiting cleanup by the stale cleanup service, by direction (backlog size)',
+  labelNames: ['direction'] as const,
+  registers: [registry],
+});
+
+/**
+ * Stale orders REMAINING unarchived after the most recent cleanup run, by direction.
+ *
+ * Non-zero values mean the run hit its batch-size limit and left work for the
+ * next pass.  A value that grows run over run means the arrival rate of
+ * orphaned announcements exceeds the cleanup throughput — raise the batch size
+ * or investigate why orders are being abandoned at the source.
+ */
+export const staleCleanupRemaining = new Gauge({
+  name: 'coordinator_stale_cleanup_remaining',
+  help: 'Stale orders left unarchived after the most recent cleanup run (candidates beyond the batch size), by direction',
+  labelNames: ['direction'] as const,
+  registers: [registry],
+});
+
+/**
+ * Wall-clock duration of each stale cleanup run.
+ *
+ * Complements `maintenanceJobDuration{job="stale_cleanup"}` with a histogram
+ * so operators can alert on p95 cleanup latency directly (e.g. `histogram_quantile(0.95, ...) > 30`)
+ * without knowing the maintenance job name.
+ */
+export const staleCleanupRunDuration = new Histogram({
+  name: 'coordinator_stale_cleanup_run_duration_seconds',
+  help: 'Wall-clock seconds each stale order cleanup run took',
+  buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30],
+  registers: [registry],
+});
+
+/**
+ * Age at which each stale order was archived, in seconds since announcement.
+ *
+ * Answers "how old is the junk we are cleaning up".  Orders archived near the
+ * 30-day retention boundary mean the process is keeping up; a rising share of
+ * very old orders means backlog has been accumulating unnoticed.
+ */
+export const staleOrdersArchivedAgeSeconds = new Histogram({
+  name: 'coordinator_stale_orders_archived_age_seconds',
+  help: 'Age in seconds at which stale announced orders were archived by the cleanup service',
+  buckets: [86400, 259200, 604800, 1209600, 1814400, 2592000],
   registers: [registry],
 });
 
@@ -534,6 +595,25 @@ export const ordersExpiredTerminalSkippedTotal = new Counter({
 export const expiryScanLastRun = new Gauge({
   name: 'coordinator_expiry_scan_last_run_timestamp_seconds',
   help: 'Unix timestamp of the most recent successful order expiry scan',
+  registers: [registry],
+});
+
+/**
+ * Orders currently in the `expired` state, by direction.
+ *
+ * These are orders whose timelock has elapsed and that are awaiting a refund
+ * or failure transition.  Unlike the generic `order_current_state` gauge this
+ * metric is purpose-built for the expiry alert below, so operators do not
+ * have to know which label combination encodes the expired backlog.
+ *
+ * Published from the order-service phase snapshot on every transition into or
+ * out of `expired`, so it stays in sync with `order_current_state` without
+ * extra database queries.
+ */
+export const expiredOrdersBacklog = new Gauge({
+  name: 'coordinator_expired_orders_backlog',
+  help: 'Number of orders currently in the expired state (timelock elapsed, awaiting refund or failure), by direction',
+  labelNames: ['direction'] as const,
   registers: [registry],
 });
 
@@ -771,6 +851,18 @@ export const maintenanceMetrics = {
   jobDuration: maintenanceJobDuration,
   lastRun: maintenanceLastRun,
   skippedTotal: maintenanceSkippedTotal,
+} as const;
+
+/** All stale cleanup metrics in one object — useful for test assertions. */
+export const staleCleanupMetrics = {
+  runsTotal: staleCleanupRuns,
+  ordersArchived: staleOrdersArchived,
+  alreadyArchivedSkipped: staleCleanupAlreadyArchivedSkipped,
+  backlog: staleCleanupBacklog,
+  remaining: staleCleanupRemaining,
+  runDuration: staleCleanupRunDuration,
+  archivedAgeSeconds: staleOrdersArchivedAgeSeconds,
+  lastRun: staleCleanupLastRun,
 } as const;
 
 // ── Event-state transition metrics ────────────────────────────────────────────
