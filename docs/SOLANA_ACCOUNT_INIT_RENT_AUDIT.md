@@ -101,7 +101,7 @@ Arithmetic is correct — 1 + 128 + 16 + 32 + 8 + 1 + 33 = 219, +8 = 227.
 | **F8** | Medium | **Size drift is asserted against a literal, not the layout.** `test/anchor-schema-stability.test.ts` and `test/fixtures-sync.test.ts` both assert `=== 227`. If someone bumps the literal to 228 to make a test pass, both still pass. The tests cannot distinguish "correct" from "consistently wrong". |
 | **F9** | Medium | **The `state` registry account is undocumented.** `e2e/devnet-sim.ts` hardcodes `[b"state"]`, offset `8` for a u64 counter, and a hand-written 65-byte order layout comment that contradicts the SDK's byte map. |
 | **F10** | Low | **Swallowed errors.** `account-validation.ts:445` has `catch { warnings.push(...) }` on the duplicate-PDA probe; a genuine RPC outage is downgraded to a warning. |
-| **F11** | Low | `init_if_needed` is not used anywhere — **correct**, and now guarded by an explicit test so a future contributor cannot introduce a re-initialisation attack silently. |
+| **F11** | Low | `init_if_needed` is not used anywhere. There is no Anchor program here for an on-chain re-initialisation regression test. |
 
 ### 2.2 `OrderRegistry` (global `state`) — undeclared
 
@@ -131,12 +131,12 @@ Minimum size: 16 bytes. Rent-exempt minimum: 890_880 lamports.
 |-------|--------|-------|
 | Space includes the 8-byte discriminator | Pass (documented, not enforced) | Pass (derived) |
 | Space accounts for every field | Pass (arithmetic correct) | Pass (derived from field-size table) |
-| No magic numbers | **Fail** (F1, F9, F12, F14) | Pass |
-| Rent computed from real account size | **Fail** (F2) | Pass |
-| Payer balance checked incl. rent + fees | **Fail** (F3) | Pass |
-| `init_if_needed` not used / guarded | Pass (unused) | Pass (now regression-tested) |
-| Client size matches on-chain size | **Fail** (F8 — untestable) | Pass (drift gate added) |
-| Errors never swallowed | **Fail** (F10) | Pass |
+| No magic numbers | **Fail** (F1, F9, F12, F14) | **Partial** — SDK layouts are centralized; devnet script still has its own seeds/layout |
+| Rent computed from real account size | **Fail** (F2) | **Partial** — SDK HTLC creation queries rent; no registry/service creation flow uses the helpers |
+| Payer balance checked incl. rent + fees | **Fail** (F3) | **Partial** — SDK HTLC client checks it; relayer path is not updated |
+| `init_if_needed` not used / guarded | Pass (unused) | Pass (no Anchor program is present to add an on-chain regression test) |
+| Client size matches on-chain size | **Fail** (F8 — untestable) | **Partial** — SDK layout/offset drift is tested; there is no on-chain source to compare |
+| Errors never swallowed | **Fail** (F10) | **Partial** — create path repeats the PDA query and surfaces RPC failure; validation still emits a warning |
 
 ---
 
@@ -171,19 +171,19 @@ The single source of truth. Exports:
   (payer solvency incl. rent + fee, uninitialised-PDA check) and a
   post-confirmation verification pass. `_buildSignSend` simulates first and
   surfaces logs. All new failures throw typed errors with diagnostics.
-- `relayer/src/services/solana-contract.ts` — `submitLock` pre-checks payer
-  solvency against the real rent-exempt minimum and verifies the order account
-  after confirmation.
-- `e2e/devnet-sim.ts` — registry seeds/sizes moved to the shared constants;
-  rent paid and verified; counter read guarded against a short buffer.
+- `relayer/src/services/solana-contract.ts` and `e2e/devnet-sim.ts` are not
+  changed in this branch. Their account creation, fee/rent checks, and account
+  layouts remain follow-up work; the devnet script also uses a different PDA
+  and instruction layout from the SDK IDL.
 - `docs/DOC_MAP.md` — this file indexed.
 
 ---
 
 ## 5. Drift gate
 
-`test/solana-account-sizing.test.ts` recomputes the account size from the
+`test/anchor-schema-stability.test.ts` recomputes the account size from the
 field table **independently** of the exported constant and asserts equality.
-Changing a field without changing the size (or vice versa) fails the build.
-That is what makes "client and chain agree" testable for the first time in this
-repository, given that the chain half does not live here.
+Changing a field without changing the size (or vice versa) fails the test.
+This only checks consistency among the SDK layout, exported size, and offsets;
+it cannot prove that the SDK matches a deployed program because the on-chain
+source is not in this repository.
