@@ -101,6 +101,15 @@ export interface SolanaHTLCClientOptions {
    * Recommended: true for production to catch misconfigured accounts early.
    */
   validateBeforeSubmit?: boolean;
+  /**
+   * Permit a plain `http://` RPC URL.  `validateRpcUrl` rejects non-TLS
+   * endpoints by default; this flag is the documented escape hatch for local
+   * sandboxes (`solana-test-validator` on 127.0.0.1) and must never be set
+   * against a public endpoint.
+   *
+   * Default: false.
+   */
+  allowHttp?: boolean;
 }
 
 export interface SolanaCreateOrderInput {
@@ -412,7 +421,9 @@ export class SolanaHTLCClient {
   private readonly validateBeforeSubmit: boolean;
 
   constructor(opts: SolanaHTLCClientOptions) {
-    const rpcUrl = validateRpcUrl(opts.rpcUrl, "solana.rpcUrl");
+    const rpcUrl = validateRpcUrl(opts.rpcUrl, "solana.rpcUrl", {
+      allowHttp: opts.allowHttp ?? false,
+    });
     const simulation = opts.programId === "PLACEHOLDER";
     const programId = simulation ? opts.programId : validateSolanaAddress(opts.programId, "solana.programId");
     this.programId = programId;
