@@ -15,7 +15,8 @@
     "clean": "rm -rf dist",
     "seed-demo": "tsx scripts/seed-demo.ts",
     "db:backup": "tsx scripts/db-backup.ts",
-    "db:restore": "tsx scripts/db-restore.ts"
+    "db:restore": "tsx scripts/db-restore.ts",
+    "db:validate-migrations": "tsx scripts/validate-migrations.ts"
   },
   "dependencies": {
     "@wafflefinance/config": "workspace:*",

@@ -437,7 +437,9 @@ export const reconciliationAmbiguousStates = new Counter({
 export const workflowDispatchDecisions = new Counter({
   name: 'coordinator_workflow_dispatch_decisions_total',
   help: 'Event dispatch decisions by path, mutation, and outcome',
-  labelNames: ['path', 'mutation', 'outcome'] as const,
+  // Label order is alphabetical so Prometheus output matches the canonical
+  // `{mutation, outcome, path}` rendering asserted in tests and dashboards.
+  labelNames: ['mutation', 'outcome', 'path'] as const,
   registers: [registry],
 });
 
@@ -474,6 +476,65 @@ export const staleCleanupAlreadyArchivedSkipped = new Counter({
 export const staleCleanupLastRun = new Gauge({
   name: 'coordinator_stale_cleanup_last_run_timestamp_seconds',
   help: 'Unix timestamp of the most recent stale order cleanup run (archival of orphaned announced orders)',
+  registers: [registry],
+});
+
+/**
+ * Stale-order BACKLOG size, by direction.
+ *
+ * Set by the stale cleanup service at the start of every run to the number of
+ * orphaned announced orders (no src lock within the retention window) that are
+ * awaiting cleanup.  This is the primary backlog-growth signal: alert when it
+ * climbs above the threshold below to learn that orphaned announcements are
+ * outpacing cleanup — or that the cleanup job has stopped running.
+ */
+export const staleCleanupBacklog = new Gauge({
+  name: 'coordinator_stale_cleanup_backlog',
+  help: 'Stale announced orders awaiting cleanup by the stale cleanup service, by direction (backlog size)',
+  labelNames: ['direction'] as const,
+  registers: [registry],
+});
+
+/**
+ * Stale orders REMAINING unarchived after the most recent cleanup run, by direction.
+ *
+ * Non-zero values mean the run hit its batch-size limit and left work for the
+ * next pass.  A value that grows run over run means the arrival rate of
+ * orphaned announcements exceeds the cleanup throughput — raise the batch size
+ * or investigate why orders are being abandoned at the source.
+ */
+export const staleCleanupRemaining = new Gauge({
+  name: 'coordinator_stale_cleanup_remaining',
+  help: 'Stale orders left unarchived after the most recent cleanup run (candidates beyond the batch size), by direction',
+  labelNames: ['direction'] as const,
+  registers: [registry],
+});
+
+/**
+ * Wall-clock duration of each stale cleanup run.
+ *
+ * Complements `maintenanceJobDuration{job="stale_cleanup"}` with a histogram
+ * so operators can alert on p95 cleanup latency directly (e.g. `histogram_quantile(0.95, ...) > 30`)
+ * without knowing the maintenance job name.
+ */
+export const staleCleanupRunDuration = new Histogram({
+  name: 'coordinator_stale_cleanup_run_duration_seconds',
+  help: 'Wall-clock seconds each stale order cleanup run took',
+  buckets: [0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30],
+  registers: [registry],
+});
+
+/**
+ * Age at which each stale order was archived, in seconds since announcement.
+ *
+ * Answers "how old is the junk we are cleaning up".  Orders archived near the
+ * 30-day retention boundary mean the process is keeping up; a rising share of
+ * very old orders means backlog has been accumulating unnoticed.
+ */
+export const staleOrdersArchivedAgeSeconds = new Histogram({
+  name: 'coordinator_stale_orders_archived_age_seconds',
+  help: 'Age in seconds at which stale announced orders were archived by the cleanup service',
+  buckets: [86400, 259200, 604800, 1209600, 1814400, 2592000],
   registers: [registry],
 });
 
@@ -534,6 +595,25 @@ export const ordersExpiredTerminalSkippedTotal = new Counter({
 export const expiryScanLastRun = new Gauge({
   name: 'coordinator_expiry_scan_last_run_timestamp_seconds',
   help: 'Unix timestamp of the most recent successful order expiry scan',
+  registers: [registry],
+});
+
+/**
+ * Orders currently in the `expired` state, by direction.
+ *
+ * These are orders whose timelock has elapsed and that are awaiting a refund
+ * or failure transition.  Unlike the generic `order_current_state` gauge this
+ * metric is purpose-built for the expiry alert below, so operators do not
+ * have to know which label combination encodes the expired backlog.
+ *
+ * Published from the order-service phase snapshot on every transition into or
+ * out of `expired`, so it stays in sync with `order_current_state` without
+ * extra database queries.
+ */
+export const expiredOrdersBacklog = new Gauge({
+  name: 'coordinator_expired_orders_backlog',
+  help: 'Number of orders currently in the expired state (timelock elapsed, awaiting refund or failure), by direction',
+  labelNames: ['direction'] as const,
   registers: [registry],
 });
 
@@ -773,6 +853,18 @@ export const maintenanceMetrics = {
   skippedTotal: maintenanceSkippedTotal,
 } as const;
 
+/** All stale cleanup metrics in one object — useful for test assertions. */
+export const staleCleanupMetrics = {
+  runsTotal: staleCleanupRuns,
+  ordersArchived: staleOrdersArchived,
+  alreadyArchivedSkipped: staleCleanupAlreadyArchivedSkipped,
+  backlog: staleCleanupBacklog,
+  remaining: staleCleanupRemaining,
+  runDuration: staleCleanupRunDuration,
+  archivedAgeSeconds: staleOrdersArchivedAgeSeconds,
+  lastRun: staleCleanupLastRun,
+} as const;
+
 // ── Event-state transition metrics ────────────────────────────────────────────
 
 /**
@@ -825,6 +917,35 @@ export const secretRecoveryOutcomeTotal = new Counter({
 // which bridge leg is affected (e.g. eth_to_xlm vs xlm_to_eth).
 
 /**
+ * Number of active (non-terminal) orders currently stuck in each phase.
+ *
+ * A phase accumulates orders when the downstream leg is stalled (e.g. resolvers
+ * not locking the destination).  A growing count here, isolated by direction
+ * and phase, is the earliest signal that a leg is wedged before individual
+ * orders start tripping SLAs.
+ */
+export const orderPhaseBacklogCount = new Gauge({
+  name: 'coordinator_order_phase_backlog',
+  help: 'Number of active (non-terminal) orders currently in each phase, by direction',
+  labelNames: ['direction', 'phase'] as const,
+  registers: [registry],
+});
+
+/**
+ * Age (seconds) of the longest-stuck order in each phase.
+ *
+ * Complements `orderPhaseBacklogCount` by measuring *severity* rather than
+ * *volume*: a single order wedged for hours is more actionable than a burst of
+ * short-lived ones.
+ */
+export const orderPhaseMaxStuckAgeSeconds = new Gauge({
+  name: 'coordinator_order_phase_max_stuck_age_seconds',
+  help: 'Age in seconds of the longest-stuck active order in each phase, by direction',
+  labelNames: ['direction', 'phase'] as const,
+  registers: [registry],
+});
+
+/**
  * Proportion of active (non-terminal) orders currently in each phase.
  *
  * Expressed as a ratio (0–1) rather than a raw count so dashboards can
@@ -838,6 +959,8 @@ export const orderPhaseRatio = new Gauge({
   name: 'coordinator_order_phase_ratio',
   help: 'Fraction of active (non-terminal) orders currently in each phase, by direction (0–1)',
   labelNames: ['direction', 'phase'] as const,
+});
+
 // ── Reconciliation replay / recovery metrics ─────────────────────────────────
 // These metrics expose the internals of the formal replay pipeline so operators
 // can detect silent event loss, cursor staleness, and forced re-syncs without
@@ -878,6 +1001,9 @@ export const orderPhaseDwellSeconds = new Histogram({
   // Buckets cover 5 s → 2 h, with fine resolution in the 30 s–15 min window
   // where most healthy swaps complete, and coarse resolution beyond that.
   buckets: [5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200],
+});
+
+/**
  * Cursor lag per chain: the distance between the cursor HWM and the current
  * chain tip in chain-native units.  Identical to `reconciliationWindowSize`
  * today but kept as a separate metric so dashboards can alert on lag vs window
@@ -907,6 +1033,9 @@ export const orderPhaseTransitionSeconds = new Histogram({
   help: 'Wall-clock seconds between consecutive phase milestones (e.g. src_locked→dst_locked), by direction',
   labelNames: ['direction', 'transition'] as const,
   buckets: [5, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200],
+});
+
+/**
  * Cumulative count of times the configured lookback window was exceeded,
  * forcing the reconciler to fall back to `tip - lookback` as the start block.
  * A non-zero rate means events before the fallback point may have been missed.
@@ -1019,6 +1148,8 @@ export const phaseDistributionMetrics = {
   phaseBacklog: orderPhaseBacklogCount,
   phaseMaxStuckAge: orderPhaseMaxStuckAgeSeconds,
 } as const;
+
+/**
  * Per-chain errors during a reconciler run.  Incremented when a single
  * chain's RPC call fails and that chain is skipped for the run.  A non-zero
  * rate for a chain means its cursor is not advancing and the window is growing.

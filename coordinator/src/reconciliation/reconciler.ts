@@ -61,6 +61,7 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import type { Logger } from "pino";
 import type { CoordinatorConfig } from "../config.js";
 import type { OrderService } from "../services/order-service.js";
+import type { Chain } from "../persistence/orders-repo.js";
 import {
   reconciliationRuns,
   reconciliationErrors,
@@ -120,6 +121,12 @@ import {
   ReplayPolicy,
   buildReplayDecision,
 } from "./replay-policy.js";
+import {
+  buildRecoveryReport,
+  formatRecoveryReport,
+  type ChainRecoveryInput,
+  type RecoveryReport,
+} from "./recovery-summary.js";
 
 // ─── Status types ─────────────────────────────────────────────────────────────
 
@@ -133,6 +140,8 @@ export interface ReconciliationStatus {
     soroban: number;
     solana: number;
   };
+  /** Populated after the first successful run — per-chain recovery replay. */
+  recovery?: RecoveryReport | null;
 }
 
 /**
@@ -201,6 +210,7 @@ export class Reconciler {
     lastRunAt: null,
     lastRunOk: null,
     eventsReplayed: 0,
+    recovery: null,
   };
 
   constructor(
@@ -240,6 +250,34 @@ export class Reconciler {
       { ethHwm, sorobanHwm, solanaHwm },
       "reconciler: cursors initialised from DB",
     );
+  }
+
+  /**
+   * #734: claim an event's idempotence key in the durable ledger before
+   * mutating anything.
+   *
+   * `seenSet.checkAndMark` is a per-run fast path only — it is cleared at the
+   * start of every run and lost entirely on restart, so a replayed window used
+   * to re-derive and re-apply every event it contained.  This claims the same
+   * key in the `processed_events` table, whose PRIMARY KEY is the actual
+   * uniqueness guarantee and does survive a restart.
+   *
+   * Returns true when the caller owns the event and should apply it; false when
+   * a previous run already claimed it, in which case the event must be skipped
+   * and the per-order cursor still advanced (the event *was* processed, just
+   * not by us).
+   */
+  private async claimEvent(
+    key: string,
+    chain: "ethereum" | "soroban" | "solana",
+    eventType: "OrderCreated" | "OrderClaimed" | "OrderRefunded"
+  ): Promise<boolean> {
+    const claimed = await this.orders.claimEvent({ eventKey: key, chain, eventType });
+    if (!claimed) {
+      reconciliationDuplicatesSkipped.inc();
+      this.log.debug({ key, chain, eventType }, "reconciler: event already processed in a previous run — skipping");
+    }
+    return claimed;
   }
 
   // ─── Public API ──────────────────────────────────────────────────────────
@@ -307,6 +345,7 @@ export class Reconciler {
     }
 
     // Update run-level status.
+    const recovery = this.buildRecoveryReport();
     this.status = {
       lastRunAt: Date.now(),
       lastRunOk: runOk,
@@ -316,7 +355,9 @@ export class Reconciler {
         soroban: this.sorobanCursor?.getHwm() ?? 0,
         solana: this.solanaCursor?.getHwm() ?? 0,
       },
+      recovery,
     };
+    this.logRecoverySummary(recovery);
 
     if (runOk) {
       reconciliationRuns.inc({ result: "success" });
@@ -508,6 +549,8 @@ export class Reconciler {
         continue;
       }
 
+      if (!(await this.claimEvent(key, "ethereum", "OrderCreated"))) continue;
+
       try {
         const order = await this.orders.findByHashlock(args.hashlock);
         if (!order) {
@@ -574,6 +617,7 @@ export class Reconciler {
         }
 
         await this.orders.recordSrcLock({
+          actor: "reconciler",
           publicId: order.publicId,
           orderId: args.orderId.toString(),
           txHash: log.transactionHash ?? "0x",
@@ -619,6 +663,8 @@ export class Reconciler {
 
       const conflict = this.seenSet.checkAndMark("ethereum", "OrderClaimed", key, semKey);
       if (conflict) continue;
+
+      if (!(await this.claimEvent(key, "ethereum", "OrderClaimed"))) continue;
 
       try {
         const order = await this.orders.findBySrcOrderId("ethereum", args.orderId.toString());
@@ -670,7 +716,7 @@ export class Reconciler {
           continue;
         }
 
-        await this.orders.recordSecret(order.publicId, args.preimage, log.transactionHash ?? "0x");
+        await this.orders.recordSecret(order.publicId, args.preimage, log.transactionHash ?? "0x", null, "reconciler");
         await this.advanceOrderCursor(order.publicId, "ethereum", blockNum);
         n++;
         reconciliationRestartRecoveryEvents.inc({ chain: "ethereum" });
@@ -706,6 +752,8 @@ export class Reconciler {
 
       const conflict = this.seenSet.checkAndMark("ethereum", "OrderRefunded", key, semKey);
       if (conflict) continue;
+
+      if (!(await this.claimEvent(key, "ethereum", "OrderRefunded"))) continue;
 
       try {
         const order = await this.orders.findBySrcOrderId("ethereum", args.orderId.toString());
@@ -754,7 +802,7 @@ export class Reconciler {
           continue;
         }
 
-        await this.orders.markStatus(order.publicId, "refunded");
+        await this.orders.markStatus(order.publicId, "refunded", "reconciler");
         await this.advanceOrderCursor(order.publicId, "ethereum", blockNum);
         n++;
         reconciliationRestartRecoveryEvents.inc({ chain: "ethereum" });
@@ -867,6 +915,8 @@ export class Reconciler {
       return 0;
     }
 
+    if (!(await this.claimEvent(sorobanDedupKey, "soroban", sorobanEvType))) return 0;
+
     if (result.kind === "created") {
       try {
         const order = await this.orders.findByHashlock(result.hashlock);
@@ -895,6 +945,7 @@ export class Reconciler {
           return 0;
         }
         await this.orders.recordSrcLock({
+          actor: "reconciler",
           publicId: order.publicId,
           orderId: result.orderId.toString(),
           txHash: ev.txHash,
@@ -951,7 +1002,7 @@ export class Reconciler {
           await this.advanceOrderCursor(order.publicId, "stellar", ev.ledger);
           return 0;
         }
-        await this.orders.recordSecret(order.publicId, result.preimage, ev.txHash);
+        await this.orders.recordSecret(order.publicId, result.preimage, ev.txHash, null, "reconciler");
         await this.advanceOrderCursor(order.publicId, "stellar", ev.ledger);
         reconciliationRestartRecoveryEvents.inc({ chain: "stellar" });
         this.log.info({ orderId: result.orderId.toString() }, "reconciler: replayed Soroban claimed");
@@ -999,7 +1050,7 @@ export class Reconciler {
           }
           return 0;
         }
-        await this.orders.markStatus(order.publicId, "refunded");
+        await this.orders.markStatus(order.publicId, "refunded", "reconciler");
         await this.advanceOrderCursor(order.publicId, "stellar", ev.ledger);
         reconciliationRestartRecoveryEvents.inc({ chain: "stellar" });
         this.log.info({ orderId: result.orderId.toString() }, "reconciler: replayed Soroban refunded");
@@ -1117,6 +1168,8 @@ export class Reconciler {
       const conflict = this.seenSet.checkAndMark("solana", "OrderCreated", key, semKey);
       if (conflict) return 0;
 
+      if (!(await this.claimEvent(key, "solana", "OrderCreated"))) return 0;
+
       try {
         const order = await this.orders.findByHashlock(hashlock);
         if (!order) {
@@ -1143,7 +1196,7 @@ export class Reconciler {
           }
           return 0;
         }
-        await this.orders.recordSrcLock({ publicId: order.publicId, orderId, txHash: sig, blockNumber: slot, timelock: timelock ?? 0 });
+        await this.orders.recordSrcLock({ actor: "reconciler", publicId: order.publicId, orderId, txHash: sig, blockNumber: slot, timelock: timelock ?? 0 });
         await this.advanceOrderCursor(order.publicId, "solana", slot);
         reconciliationRestartRecoveryEvents.inc({ chain: "solana" });
         return 1;
@@ -1167,6 +1220,8 @@ export class Reconciler {
       const semKey = semanticKey("solana", "OrderClaimed", orderId);
       const conflict = this.seenSet.checkAndMark("solana", "OrderClaimed", key, semKey);
       if (conflict) return 0;
+
+      if (!(await this.claimEvent(key, "solana", "OrderClaimed"))) return 0;
 
       try {
         const order = await this.orders.findBySrcOrderId("solana", orderId);
@@ -1198,7 +1253,7 @@ export class Reconciler {
           await this.advanceOrderCursor(order.publicId, "solana", slot);
           return 0;
         }
-        await this.orders.recordSecret(order.publicId, preimage, sig);
+        await this.orders.recordSecret(order.publicId, preimage, sig, null, "reconciler");
         await this.advanceOrderCursor(order.publicId, "solana", slot);
         reconciliationRestartRecoveryEvents.inc({ chain: "solana" });
         return 1;
@@ -1222,6 +1277,8 @@ export class Reconciler {
       const semKey = semanticKey("solana", "OrderRefunded", orderId);
       const conflict = this.seenSet.checkAndMark("solana", "OrderRefunded", key, semKey);
       if (conflict) return 0;
+
+      if (!(await this.claimEvent(key, "solana", "OrderRefunded"))) return 0;
 
       try {
         const order = await this.orders.findBySrcOrderId("solana", orderId);
@@ -1250,7 +1307,7 @@ export class Reconciler {
           }
           return 0;
         }
-        await this.orders.markStatus(order.publicId, "refunded");
+        await this.orders.markStatus(order.publicId, "refunded", "reconciler");
         await this.advanceOrderCursor(order.publicId, "solana", slot);
         reconciliationRestartRecoveryEvents.inc({ chain: "solana" });
         return 1;
@@ -1267,6 +1324,53 @@ export class Reconciler {
     }
 
     return 0;
+  }
+
+  /**
+   * Build the operator-facing recovery report for the run that just finished.
+   *
+   * Uses each replay decision's effective `toBlock` as the tip and recomputes
+   * the scanner's actual from/to per chain, so the report is consistent with
+   * what was scanned even after a lookback fallback or forced re-sync.
+   */
+  private buildRecoveryReport(): RecoveryReport {
+    const hwmByChain: Record<string, number> = {
+      ethereum: this.ethCursor?.getHwm() ?? 0,
+      stellar: this.sorobanCursor?.getHwm() ?? 0,
+      solana: this.solanaCursor?.getHwm() ?? 0,
+    };
+
+    const inputs: ChainRecoveryInput[] = this.policy.getDecisions().map((decision) => ({
+      chain: decision.chain as Chain,
+      hwm: hwmByChain[decision.chain] ?? 0,
+      tip: decision.toBlock,
+      fromBlock: decision.fromBlock,
+    }));
+
+    return buildRecoveryReport(inputs);
+  }
+
+  /**
+   * Log the recovery replay summary with an appropriate level per overall
+   * verdict: info while catching up, warn when at risk, error on forced
+   * re-sync (events may have been permanently missed).
+   */
+  private logRecoverySummary(recovery: RecoveryReport): void {
+    if (recovery.chainSummaries.length === 0) return;
+    const message = formatRecoveryReport(recovery);
+    switch (recovery.overall) {
+      case "intervention_required":
+        this.log.error({ recovery: recovery.chainSummaries, overall: recovery.overall }, message);
+        break;
+      case "at_risk":
+        this.log.warn({ recovery: recovery.chainSummaries, overall: recovery.overall }, message);
+        break;
+      case "recovering":
+        this.log.info({ recovery: recovery.chainSummaries, overall: recovery.overall }, message);
+        break;
+      default:
+        break; // healthy — nothing to flag; regular run logs cover it.
+    }
   }
 
   private emitPolicyMetrics(): void {

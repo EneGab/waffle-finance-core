@@ -235,25 +235,52 @@ tested classifier that maps every error class above to a UI-facing category.
 
 ## Subpath exports
 
-| Subpath | Contents |
-| --- | --- |
-| `@wafflefinance/sdk` | Everything below, re-exported from one entry point (largest bundle — prefer subpaths in size-sensitive code). |
-| `@wafflefinance/sdk/types` | `Chain`, `Direction`, `OrderStatus`, `Order`, `ChainLeg`, `ResolverInfo`, external-bridge route types. Zero runtime cost (types only). |
-| `@wafflefinance/sdk/htlc-client` | `IHTLCClient`, `HTLCError`, `HTLCErrorCode`, result types. |
-| `@wafflefinance/sdk/coordinator` | `CoordinatorClient`, `HistoryClient`, `OrderSubscriber`, validation helpers, transforms, wire-contract types, error classes. |
-| `@wafflefinance/sdk/secrets` | `generateSecret`, `hashSecret`, `verifyPreimage`. |
-| `@wafflefinance/sdk/state-machine` | SDK-local order transition guards (`canTransition`, `requireTransition`, `isTerminal`, `nextStatesOf`). |
-| `@wafflefinance/sdk/assets` | Asset resolution/normalisation/validation helpers — see [ASSET_MAPPING_CONTRACT.md](./ASSET_MAPPING_CONTRACT.md). |
-| `@wafflefinance/sdk/routes` | Route-identity registry: route validation, serialised route ids, per-network availability — see [ROUTE_REGISTRY.md](./ROUTE_REGISTRY.md). |
-| `@wafflefinance/sdk/config-validation` | Runtime config validation for RPC URLs, chain IDs, chain-local addresses, network passphrases, and source/destination pairs. |
-| `@wafflefinance/sdk/ethereum`, `/ethereum/adapter` | `EthereumHTLCClient`, `EthereumHTLCAdapter`. |
-| `@wafflefinance/sdk/soroban`, `/soroban/adapter` | `SorobanHTLCClient`, `SorobanHTLCAdapter`, order-ref encode/decode. |
-| `@wafflefinance/sdk/solana`, `/solana/adapter` | `SolanaHTLCClient`, `SolanaHTLCAdapter`. |
-| `@wafflefinance/sdk/shared-utils` | Hex/buffer conversion, order-ID/hashlock helpers, timelock estimation. |
+The intended package shape is one narrow subpath per concern, grouped so that a
+consumer only ever loads the chain(s) it actually uses. `.` is the
+convenience barrel over all of them and stays supported for compatibility; the
+subpaths are what you should reach for in size- or start-up-sensitive code.
+See [TREE_SHAKING.md](./TREE_SHAKING.md) for the measured cost of each entry
+point and the reasoning behind the layout (#731).
+
+| Subpath | Contents | Chain SDK loaded |
+| --- | --- | --- |
+| `@wafflefinance/sdk` | Everything below, re-exported from one entry point (largest graph — prefer subpaths in size-sensitive code). | all three |
+| **Chain-neutral** | | |
+| `@wafflefinance/sdk/types` | `Chain`, `Direction`, `OrderStatus`, `Order`, `ChainLeg`, `ResolverInfo`, external-bridge route types. Zero runtime cost (types only). | none |
+| `@wafflefinance/sdk/htlc-client` | `IHTLCClient`, `HTLCError`, `HTLCErrorCode`, result types. | none |
+| `@wafflefinance/sdk/secrets` | `generateSecret`, `hashSecret`, `verifyPreimage`. | viem¹ |
+| `@wafflefinance/sdk/state-machine` | SDK-local order transition guards (`canTransition`, `requireTransition`, `isTerminal`, `nextStatesOf`). | none |
+| `@wafflefinance/sdk/status-display` | `describeOrderStatus`, `displayStatusFor`, `statusDisplay`, `ALL_DISPLAY_STATUSES` — user-facing status copy. | none |
+| `@wafflefinance/sdk/approval` | `APPROVAL_SEMANTICS`, `normalizeApprovalMessage`, `isApprovalError` — per-chain approval guidance. | none |
+| `@wafflefinance/sdk/assets` | Asset resolution/normalisation/validation helpers — see [ASSET_MAPPING_CONTRACT.md](./ASSET_MAPPING_CONTRACT.md). | none |
+| `@wafflefinance/sdk/routes` | Route-identity registry: route validation, serialised route ids, per-network availability — see [ROUTE_REGISTRY.md](./ROUTE_REGISTRY.md). | none |
+| `@wafflefinance/sdk/routes/fee-policy` | `estimateRouteFee`, `getRouteFeePolicy`, `ROUTE_FEE_POLICIES` on their own, without the registry. | none |
+| `@wafflefinance/sdk/shared-utils` | Hex/buffer conversion, order-ID/hashlock helpers, timelock estimation, `classifyRpcError`. | none |
+| `@wafflefinance/sdk/coordinator` | `CoordinatorClient`, `HistoryClient`, `OrderSubscriber`, validation helpers, transforms, wire-contract types, error classes. | none |
+| **Ethereum** | | |
+| `@wafflefinance/sdk/ethereum` | `EthereumHTLCClient`, `HTLC_ESCROW_ABI`. | viem |
+| `@wafflefinance/sdk/ethereum/adapter` | `EthereumHTLCAdapter` — normalised `IHTLCClient` implementation. | none² |
+| **Soroban** | | |
+| `@wafflefinance/sdk/soroban` | `SorobanHTLCClient`, `makeKeypairSigner`. | stellar-sdk |
+| `@wafflefinance/sdk/soroban/adapter` | `SorobanHTLCAdapter`, order-ref encode/decode. | stellar-sdk |
+| `@wafflefinance/sdk/soroban/orchestrator` | `orchestrateTransaction` and its config/result types. | stellar-sdk |
+| **Solana** | | |
+| `@wafflefinance/sdk/solana` | `SolanaHTLCClient`, instruction builders, account deserialisation. | web3.js |
+| `@wafflefinance/sdk/solana/adapter` | `SolanaHTLCAdapter`. | none² |
+| `@wafflefinance/sdk/solana/rpc-provider` | `SolanaRpcProvider`, `createSolanaRpcProvider` — multi-endpoint failover (#713). | none |
+| `@wafflefinance/sdk/solana/account-validation` | Pre-submission account/PDA validation (#715). | web3.js |
+| `@wafflefinance/sdk/solana/idl` | Anchor IDL constants and `assertIdlCompatibility` (#712). | none |
+
+¹ `secrets` hashes via viem because viem is the SDK's only source of keccak256.
+Tracked in `KNOWN_COUPLINGS` in `scripts/verify-subpath-isolation.mjs`.
+² The `*/adapter` entries import their chain client only for types, so they
+resolve without the chain SDK at runtime.
 
 Deep imports outside this table (e.g. `@wafflefinance/sdk/coordinator/client`)
 are not exposed by `package.json#exports` and will fail to resolve — that's
-enforced by Node, not just documented convention.
+enforced by Node, not just documented convention. Every entry above is checked
+against the build output by `npm run analyze`; the table cannot drift from
+`package.json` without CI noticing.
 
 ## Soroban contract schema
 
@@ -288,7 +315,9 @@ npm run typecheck   # tsc --noEmit — also checks test/ and examples/
 npm test            # vitest run
 npm run test:watch  # vitest, watch mode
 npm run lint        # eslint src
-npm run build:analyze # build + bundle/tree-shaking sanity check
+npm run analyze     # every exports subpath resolves in dist/, nothing unreachable
+npm run analyze:cost # per-entry module count, chain SDKs, real bundle bytes (#731)
+npm run verify:subpaths # runtime proof that a subpath does not pull other chains
 ```
 
 See also [TREE_SHAKING.md](./TREE_SHAKING.md) (bundle optimisation),
