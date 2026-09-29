@@ -8,7 +8,7 @@ import {
 } from '@stellar/stellar-sdk';
 import { useSendTransaction, useSwitchChain } from 'wagmi';
 import { mainnet, sepolia } from 'wagmi/chains';
-import { classifyRpcError } from '@wafflefinance/sdk/shared-utils';
+import { classifyRpcError } from '@wafflefinance/sdk';
 import { isTestnet, getCurrentNetwork } from '../../config/networks';
 import { selectApiBaseUrl, selectIsMockDataEnabled, selectSolanaRoutesEnabled } from '../../config/selectors';
 import { parseHtlcReceipt } from '../../lib/parseHtlcReceipt';
