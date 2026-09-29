@@ -1,18 +1,15 @@
-import { Connection, PublicKey } from "@solana/web3.js";
-import type { Logger } from "pino";
-import type { CoordinatorConfig } from "../config.js";
-import type { OrderService } from "../services/order-service.js";
+import { Connection, PublicKey } from '@solana/web3.js';
+import type { Logger } from 'pino';
+import type { CoordinatorConfig } from '../config.js';
+import type { OrderService } from '../services/order-service.js';
 import {
   observeListenerEventProcessing,
   recordListenerProgress,
   workflowDispatchDecisions,
-} from "../metrics.js";
-import { isSolanaPlaceholder } from "../config.js";
-import { decideDispatch } from "../services/workflow-priority-policy.js";
-import {
-  SolanaRpcProvider,
-  createSolanaRpcProvider,
-} from "@wafflefinance/sdk";
+} from '../metrics.js';
+import { isSolanaPlaceholder } from '../config.js';
+import { decideDispatch } from '../services/workflow-priority-policy.js';
+import { SolanaRpcProvider, createSolanaRpcProvider } from '@wafflefinance/sdk';
 
 /**
  * Confirmation level constants for Solana commitment model.
@@ -20,7 +17,7 @@ import {
  * - confirmed:  voted on by supermajority, very likely final (~0.5s)
  * - finalized:  max lockout reached, irreversible (~12s)
  */
-export const CONFIRMATION_LEVELS = ["processed", "confirmed", "finalized"] as const;
+export const CONFIRMATION_LEVELS = ['processed', 'confirmed', 'finalized'] as const;
 export type ConfirmationLevel = (typeof CONFIRMATION_LEVELS)[number];
 
 /**
@@ -86,8 +83,7 @@ export class SolanaListener {
    * Confirmation queue: slot number → array of {sig, logs} objects seen at
    * `confirmed` commitment but not yet finalized.
    */
-  private readonly pendingSlots: Map<number, Array<{ sig: string; logs: string[] }>> =
-    new Map();
+  private readonly pendingSlots: Map<number, Array<{ sig: string; logs: string[] }>> = new Map();
 
   /**
    * Index of already-processed orders keyed by the Solana slot in which
@@ -108,12 +104,11 @@ export class SolanaListener {
     private readonly orders: OrderService,
     log: Logger
   ) {
-    this.log = log.child({ component: "SolanaListener" });
-    this.rpcProvider = createSolanaRpcProvider(
-      cfg.solana.rpcUrl,
-      cfg.solana.commitment,
-      { maxConsecutiveErrors: 3, recoveryWindowMs: 30_000 }
-    );
+    this.log = log.child({ component: 'SolanaListener' });
+    this.rpcProvider = createSolanaRpcProvider(cfg.solana.rpcUrl, cfg.solana.commitment, {
+      maxConsecutiveErrors: 3,
+      recoveryWindowMs: 30_000,
+    });
     // Keep a direct connection reference for callers that need it
     // (e.g. getParsedTransaction — which is already inside withFallback).
     this.connection = this.rpcProvider.getConnection();
@@ -123,11 +118,11 @@ export class SolanaListener {
     if (isSolanaPlaceholder(this.cfg.solana.programId)) {
       this.log.warn(
         { programId: this.cfg.solana.programId },
-        "SOLANA_HTLC_PROGRAM is a placeholder — Solana listener disabled"
+        'SOLANA_HTLC_PROGRAM is a placeholder — Solana listener disabled'
       );
       return;
     }
-    this.log.info({ program: this.cfg.solana.programId }, "Solana listener starting");
+    this.log.info({ program: this.cfg.solana.programId }, 'Solana listener starting');
     void this.loop();
   }
 
@@ -163,10 +158,10 @@ export class SolanaListener {
       try {
         await this.poll(programPk);
       } catch (err) {
-        this.log.warn({ err }, "Solana poll failed");
+        this.log.warn({ err }, 'Solana poll failed');
       }
 
-      await new Promise<void>((r) => {
+      await new Promise<void>(r => {
         this.timeoutId = setTimeout(r, this.cfg.pollIntervalMs);
       });
     }
@@ -179,8 +174,8 @@ export class SolanaListener {
     // All RPC calls are routed through the provider so a degraded primary
     // endpoint transparently falls back to a configured secondary (#713).
     const [finalizedSlot, confirmedSlot] = await Promise.all([
-      this.rpcProvider.withFallback((conn) => conn.getSlot("finalized"), "getSlot(finalized)"),
-      this.rpcProvider.withFallback((conn) => conn.getSlot("confirmed"), "getSlot(confirmed)"),
+      this.rpcProvider.withFallback(conn => conn.getSlot('finalized'), 'getSlot(finalized)'),
+      this.rpcProvider.withFallback(conn => conn.getSlot('confirmed'), 'getSlot(confirmed)'),
     ]);
 
     // Report RPC provider health for degraded-mode detection.
@@ -188,7 +183,7 @@ export class SolanaListener {
     if (providerHealth.degraded) {
       this.log.warn(
         { activeEndpoint: providerHealth.activeEndpoint, endpoints: providerHealth.endpoints },
-        "Solana RPC provider is degraded — running on fallback endpoint"
+        'Solana RPC provider is degraded — running on fallback endpoint'
       );
     }
 
@@ -196,15 +191,15 @@ export class SolanaListener {
     if (this.lastSlot > 0 && confirmedSlot < this.lastSlot - REGRESSION_THRESHOLD) {
       this.log.warn(
         { confirmedSlot, lastSlot: this.lastSlot, finalizedSlot },
-        "Solana slot regression detected"
+        'Solana slot regression detected'
       );
       await this.handleRegression(confirmedSlot);
     }
 
     // --- Step c: fetch new signatures at `confirmed` and queue them --------
     const sigs = await this.rpcProvider.withFallback(
-      (conn) => conn.getSignaturesForAddress(programPk, { limit: 50 }),
-      "getSignaturesForAddress"
+      conn => conn.getSignaturesForAddress(programPk, { limit: 50 }),
+      'getSignaturesForAddress'
     );
 
     for (const sigInfo of sigs) {
@@ -217,20 +212,26 @@ export class SolanaListener {
       // processed.  This prevents double-queueing on overlapping poll windows
       // and on restart when the same signatures are returned again.
       if (this.isDuplicate(sigInfo.signature)) {
-        this.log.debug({ sig: sigInfo.signature }, "Solana event duplicate skipped (in-process cache) during queue");
+        this.log.debug(
+          { sig: sigInfo.signature },
+          'Solana event duplicate skipped (in-process cache) during queue'
+        );
         continue;
       }
       if (this.isInPendingSlots(sigInfo.signature)) {
-        this.log.debug({ sig: sigInfo.signature, slot: sigInfo.slot }, "Solana event already queued in pendingSlots — skipping");
+        this.log.debug(
+          { sig: sigInfo.signature, slot: sigInfo.slot },
+          'Solana event already queued in pendingSlots — skipping'
+        );
         continue;
       }
 
       let logs: string[] = [];
       try {
         const tx = await this.rpcProvider.withFallback(
-          (conn) =>
+          conn =>
             conn.getParsedTransaction(sigInfo.signature, {
-              commitment: "confirmed",
+              commitment: 'confirmed',
               maxSupportedTransactionVersion: 0,
             }),
           `getParsedTransaction(${sigInfo.signature.slice(0, 8)}…)`
@@ -238,7 +239,7 @@ export class SolanaListener {
         if (!tx?.meta?.logMessages) continue;
         logs = tx.meta.logMessages;
       } catch (txErr) {
-        this.log.warn({ sig: sigInfo.signature, err: txErr }, "failed to fetch tx");
+        this.log.warn({ sig: sigInfo.signature, err: txErr }, 'failed to fetch tx');
         continue;
       }
 
@@ -252,7 +253,7 @@ export class SolanaListener {
 
     // Update lastSlot to the highest slot seen across all returned sigs.
     if (sigs.length > 0) {
-      this.lastSlot = Math.max(this.lastSlot, ...sigs.map((s) => s.slot));
+      this.lastSlot = Math.max(this.lastSlot, ...sigs.map(s => s.slot));
     } else if (this.lastSlot === 0) {
       // First poll with no events yet — anchor to current confirmed slot.
       this.lastSlot = confirmedSlot;
@@ -273,7 +274,7 @@ export class SolanaListener {
     const pruneOlderThan = finalizedSlot - PENDING_SLOTS_MAX_AGE;
     for (const slot of this.pendingSlots.keys()) {
       if (slot < pruneOlderThan) {
-        this.log.debug({ slot, pruneOlderThan }, "pruning stale pending slot");
+        this.log.debug({ slot, pruneOlderThan }, 'pruning stale pending slot');
         this.pendingSlots.delete(slot);
       }
     }
@@ -285,8 +286,8 @@ export class SolanaListener {
       }
     }
 
-    recordListenerProgress("solana", this.lastSlot, confirmedSlot);
-    observeListenerEventProcessing("solana", "poll", startedAt);
+    recordListenerProgress('solana', this.lastSlot, confirmedSlot);
+    observeListenerEventProcessing('solana', 'poll', startedAt);
   }
 
   // ---------------------------------------------------------------------------
@@ -352,7 +353,7 @@ export class SolanaListener {
     if (droppedPending > 0) {
       this.log.warn(
         { regressionStart, regressionEnd, droppedPending },
-        "dropped pending transactions in regressed slot range"
+        'dropped pending transactions in regressed slot range'
       );
     }
 
@@ -366,10 +367,10 @@ export class SolanaListener {
           await this.orders.rollbackSrcLock(publicId);
           this.log.warn(
             { publicId, slot, regressionStart, regressionEnd },
-            "rolled back src lock due to Solana slot regression"
+            'rolled back src lock due to Solana slot regression'
           );
         } catch (err) {
-          this.log.warn({ err, publicId, slot }, "could not rollback src lock for regressed slot");
+          this.log.warn({ err, publicId, slot }, 'could not rollback src lock for regressed slot');
         }
       }
       this.processedBySlot.delete(slot);
@@ -401,7 +402,7 @@ export class SolanaListener {
     // If we have already processed this signature in the current process
     // lifetime, skip without touching the DB.
     if (this.isDuplicate(sig)) {
-      this.log.debug({ sig }, "Solana event duplicate skipped (in-process cache)");
+      this.log.debug({ sig }, 'Solana event duplicate skipped (in-process cache)');
       return;
     }
 
@@ -409,9 +410,15 @@ export class SolanaListener {
     const payload: Record<string, unknown> = {};
 
     for (const line of logs) {
-      if (line.includes("OrderCreated"))  { eventType = "OrderCreated"; }
-      if (line.includes("OrderClaimed"))  { eventType = "OrderClaimed"; }
-      if (line.includes("OrderRefunded")) { eventType = "OrderRefunded"; }
+      if (line.includes('OrderCreated')) {
+        eventType = 'OrderCreated';
+      }
+      if (line.includes('OrderClaimed')) {
+        eventType = 'OrderClaimed';
+      }
+      if (line.includes('OrderRefunded')) {
+        eventType = 'OrderRefunded';
+      }
 
       // Try to pick up a JSON payload from any log line (Anchor emits them as
       // "Program log: {.}" or "Program data: {.}").
@@ -419,21 +426,26 @@ export class SolanaListener {
       if (jsonMatch) {
         try {
           Object.assign(payload, JSON.parse(jsonMatch[0]));
-        } catch { /* not JSON - skip */ }
+        } catch {
+          /* not JSON - skip */
+        }
       }
     }
 
     if (!eventType) return;
 
-    this.log.info({ sig, event: eventType, payload }, "Solana HTLC event");
+    this.log.info({ sig, event: eventType, payload }, 'Solana HTLC event');
 
-    if (eventType === "OrderCreated") {
-      const hashlock = payload.hashlock as string | undefined;
-      const orderId  = payload.orderId  as string | undefined;
-      const timelock = payload.timelock as number | undefined;
+    if (eventType === 'OrderCreated') {
+      const hashlock = (payload.hashlock ?? payload.hash_lock) as string | undefined;
+      const orderId = (payload.orderId ?? payload.order_id) as string | undefined;
+      const timelock = (payload.timelock ?? payload.time_lock) as number | undefined;
 
       if (!hashlock || !orderId || timelock === null || timelock === undefined) {
-        this.log.warn({ sig, payload }, "OrderCreated missing required fields - cannot record src lock");
+        this.log.warn(
+          { sig, payload },
+          'OrderCreated missing required fields - cannot record src lock'
+        );
         return;
       }
 
@@ -443,24 +455,24 @@ export class SolanaListener {
         try {
           const order = await this.orders.findByHashlock(hashlock);
           if (!order) {
-            this.log.info({ hashlock, orderId }, "Solana order observed without local announce");
+            this.log.info({ hashlock, orderId }, 'Solana order observed without local announce');
             return;
           }
           const decision = decideDispatch({
-            path: "live",
-            mutation: "src_lock",
+            path: 'live',
+            mutation: 'src_lock',
             incomingSequence: effectiveSlot,
             existingSequence: order.srcLockBlock,
             alreadyApplied: order.srcOrderId !== null,
           });
           workflowDispatchDecisions.inc({
-            path: "live",
-            mutation: "src_lock",
+            path: 'live',
+            mutation: 'src_lock',
             outcome: decision.reason,
           });
           if (!decision.shouldApply) return;
           await this.orders.recordSrcLock({
-            actor: "solana_listener",
+            actor: 'solana_listener',
             publicId: order.publicId,
             orderId,
             txHash: sig,
@@ -475,67 +487,73 @@ export class SolanaListener {
           }
           this.processedBySlot.get(effectiveSlot)!.push(order.publicId);
         } catch (err) {
-          this.log.warn({ err, hashlock }, "could not record Solana src lock");
+          this.log.warn({ err, hashlock }, 'could not record Solana src lock');
         }
       })();
     }
 
-    if (eventType === "OrderClaimed") {
+    if (eventType === 'OrderClaimed') {
       const preimage = payload.preimage as string | undefined;
-      const orderId  = payload.orderId  as string | undefined;
+      const orderId = (payload.orderId ?? payload.order_id) as string | undefined;
       if (preimage && orderId) {
         void (async () => {
           try {
-            const order = await this.orders.findBySrcOrderId("solana", orderId);
+            const order = await this.orders.findBySrcOrderId('solana', orderId);
             if (order) {
               const decision = decideDispatch({
-                path: "live",
-                mutation: "secret_reveal",
+                path: 'live',
+                mutation: 'secret_reveal',
                 incomingSequence: slot ?? null,
                 existingSequence: null,
                 alreadyApplied: order.preimage !== null,
               });
               workflowDispatchDecisions.inc({
-                path: "live",
-                mutation: "secret_reveal",
+                path: 'live',
+                mutation: 'secret_reveal',
                 outcome: decision.reason,
               });
               if (!decision.shouldApply) return;
-              await this.orders.recordSecret(order.publicId, preimage, sig, null, "solana_listener");
+              await this.orders.recordSecret(
+                order.publicId,
+                preimage,
+                sig,
+                null,
+                'solana_listener'
+              );
               this.markSigProcessed(sig);
             }
           } catch (err) {
-            this.log.warn({ err, orderId }, "could not record Solana secret");
+            this.log.warn({ err, orderId }, 'could not record Solana secret');
           }
         })();
       }
     }
 
-    if (eventType === "OrderRefunded") {
-      const orderId = payload.orderId as string | undefined;
+    if (eventType === 'OrderRefunded') {
+      const orderId = (payload.orderId ?? payload.order_id) as string | undefined;
       if (orderId) {
         void (async () => {
           try {
-            const order = await this.orders.findBySrcOrderId("solana", orderId);
+            const order = await this.orders.findBySrcOrderId('solana', orderId);
             if (order) {
               const decision = decideDispatch({
-                path: "live",
-                mutation: "refund",
+                path: 'live',
+                mutation: 'refund',
                 incomingSequence: slot ?? null,
                 existingSequence: order.srcLockBlock,
-                alreadyApplied: order.status === "refunded" || order.status === "completed",
+                alreadyApplied: order.status === 'refunded' || order.status === 'completed',
               });
               workflowDispatchDecisions.inc({
-                path: "live",
-                mutation: "refund",
+                path: 'live',
+                mutation: 'refund',
                 outcome: decision.reason,
               });
               if (!decision.shouldApply) return;
-              await this.orders.markStatus(order.publicId, "refunded", "solana_listener");
+              await this.orders.markStatus(order.publicId, 'refunded', 'solana_listener');
               this.markSigProcessed(sig);
             }
           } catch (err) {
-            this.log.warn({ err, orderId }, "could not mark Solana order refunded");
+            this.log.warn({ err, orderId }, 'could not mark Solana order refunded');
           }
         })();
       }
