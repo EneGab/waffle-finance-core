@@ -129,14 +129,17 @@ Minimum size: 16 bytes. Rent-exempt minimum: 890_880 lamports.
 
 | Check | Before | After |
 |-------|--------|-------|
-| Space includes the 8-byte discriminator | Pass (documented, not enforced) | Pass (derived) |
-| Space accounts for every field | Pass (arithmetic correct) | Pass (derived from field-size table) |
-| No magic numbers | **Fail** (F1, F9, F12, F14) | **Partial** — SDK layouts are centralized; devnet script still has its own seeds/layout |
-| Rent computed from real account size | **Fail** (F2) | **Partial** — SDK HTLC creation queries rent; no registry/service creation flow uses the helpers |
-| Payer balance checked incl. rent + fees | **Fail** (F3) | **Partial** — SDK HTLC client checks it; relayer path is not updated |
+| Space includes the 8-byte discriminator | Pass (documented, not enforced) | Pass (derived, and validated at import) |
+| Space accounts for every field | Pass (arithmetic correct) | Pass (derived from field-size table, plus an independent byte-map drift gate) |
+| No magic numbers | **Fail** (F1, F9, F12, F14) | **Pass for the SDK and relayer**; the devnet harness still carries its own 65-byte layout (F15), unresolved by design |
+| Rent computed from real account size | **Fail** (F2) | **Pass** — SDK, relayer, and devnet harness all query `getMinimumBalanceForRentExemption` with the derived size |
+| Payer balance checked incl. rent + fees | **Fail** (F3) | **Pass** — `assertPayerCanFund` in the SDK client, the relayer preflight, and the devnet harness |
 | `init_if_needed` not used / guarded | Pass (unused) | Pass (no Anchor program is present to add an on-chain regression test) |
-| Client size matches on-chain size | **Fail** (F8 — untestable) | **Partial** — SDK layout/offset drift is tested; there is no on-chain source to compare |
-| Errors never swallowed | **Fail** (F10) | **Partial** — create path repeats the PDA query and surfaces RPC failure; validation still emits a warning |
+| Client size matches on-chain size | **Fail** (F8 — untestable) | **Partial** — SDK layout/offset drift is now genuinely gated; there is still no on-chain source to compare |
+| Errors never swallowed | **Fail** (F10) | **Pass** — RPC failures are hard errors (`rpc_unavailable`); duplicate PDA is `already_initialized` / `unexpected_account_balance` |
+| Simulation before send | **Fail** (F4) | **Pass** — `simulateTransactionOrThrow` runs explicitly in both the SDK client and the relayer, with logs attached to the thrown error |
+| Post-init verification | **Fail** (F5) | **Pass** — owner, exact size, and rent exemption re-checked after confirmation |
+| Tests exist for the invariants | **Fail** (no sizing test file) | **Pass** — `test/solana-account-sizing.test.ts`, 43 cases |
 
 ---
 

@@ -94,6 +94,7 @@ export {
 // account correctly.
 export {
   ANCHOR_DISCRIMINATOR_SIZE,
+  ANCHOR_LAYOUT_TABLE_SOURCE,
   SOLANA_ANCHOR_ACCOUNT_LAYOUTS,
   SOLANA_TYPE_SIZES,
   MAINNET_RENT,
@@ -115,7 +116,10 @@ export {
   InsufficientRentError,
   AccountAlreadyInitializedError,
   UnexpectedAccountBalanceError,
+  UnexpectedAccountOwnerError,
+  AccountNotRentExemptError,
   AccountInitVerificationError,
+  SimulationFailedError,
 } from "./account-sizing.js";
 export type {
   AccountFieldSpec,
@@ -142,6 +146,16 @@ export type {
   AccountValidationCode,
   AccountValidationResult,
 } from "./account-validation.js";
+
+// The multi-endpoint RPC provider is part of the Solana surface: the relayer and
+// the coordinator both import it from this subpath. It previously existed only
+// on the package root, so `@wafflefinance/sdk/solana` resolved to `undefined`
+// at runtime (`createSolanaRpcProvider is not a function`) even though the
+// TypeScript import looked fine in editors that resolved the root entrypoint.
+export {
+  SolanaRpcProvider,
+  createSolanaRpcProvider,
+} from "./rpc-provider.js";
 
 /** 0x-prefixed hex string (mirrors viem's HexString). */
 type HexString = `0x${string}`;
@@ -584,13 +598,26 @@ export class SolanaHTLCClient {
    * When `validateBeforeSubmit` is enabled, validates all addresses and
    * detects duplicate orders before building the transaction (#715).
    *
-   * @returns The transaction signature and the deterministic order id
-   *          (= PDA address derived from the hashlock).
+   * The preflight (rent from the cluster, payer solvency, target-account state)
+   * and the post-confirmation verification both run unless explicitly disabled.
+   * Both throw a typed `SolanaAccountInitError` naming the account, so a
+   * mis-sized or under-funded order never reaches the cluster as an opaque
+   * "Custom program error: 0x…".
+   *
+   * @returns The transaction signature, the deterministic order id
+   *          (= PDA address derived from the hashlock), and the verified
+   *          on-chain account — or `null` for `account` when
+   *          `verifyAfterInit` is disabled, because an unverified account must
+   *          not be reported as if it had been checked.
    */
   async createOrder(
     input: SolanaCreateOrderInput,
     signer: SolanaSigner
-  ): Promise<{ txSignature: TransactionSignature; orderId: string; account: VerifiedAccount }> {
+  ): Promise<{
+    txSignature: TransactionSignature;
+    orderId: string;
+    account: VerifiedAccount | null;
+  }> {
     if (this.simulation) {
       const mockSig = "SIMULATION_" + input.hashlockHex.slice(2, 18);
       console.warn("[SolanaHTLCClient] simulation createOrder →", mockSig);
@@ -665,18 +692,14 @@ export class SolanaHTLCClient {
     const sig = await this._buildSignSend([instruction], signer);
 
     // ── Post-init verification ────────────────────────────────────────────
+    // `null` — not a fabricated object — when verification is disabled: a
+    // caller must be able to tell "checked and correct" from "not checked".
     const account = this.verifyAfterInit
       ? await verifyInitialisedAccount(this.connection, orderPda, "htlcOrder", {
           expectedOwner: programPk,
           commitment: this.commitment,
         })
-      : ({
-          address: orderPda.toBase58(),
-          owner: programPk.toBase58(),
-          dataLength: HTLC_ORDER_ACCOUNT_SIZE,
-          lamports: 0n,
-          rentExemptMinimum: 0n,
-        } as VerifiedAccount);
+      : null;
 
     return { txSignature: sig, orderId: orderPda.toBase58(), account };
   }
@@ -724,10 +747,10 @@ export class SolanaHTLCClient {
     //    that was pre-funded with a stray transfer is indistinguishable from
     //    "absent" unless it is classified explicitly.
     const existing = await this.connection.getAccountInfo(args.orderPda, this.commitment);
-    assertAccountIsUninitialised(
-      classifyUninitialisedAccount(existing as never, args.programPk),
-      { account, programId: args.programPk.toBase58() }
-    );
+    assertAccountIsUninitialised(classifyUninitialisedAccount(existing, args.programPk), {
+      account,
+      programId: args.programPk.toBase58(),
+    });
 
     return { rentLamports };
   }
@@ -866,7 +889,14 @@ export class SolanaHTLCClient {
       );
     }
 
-    const sig = await this.connection.sendRawTransaction(signed.serialize());
+    // `skipPreflight` is passed explicitly because web3.js defaults it to
+    // `true`. When we simulate above, that simulation *is* the preflight, so
+    // repeating it would only cost a round trip; when simulation is disabled
+    // (the mock-connection test escape hatch) web3.js must still run its own,
+    // otherwise neither guard exists and a doomed transaction is submitted.
+    const sig = await this.connection.sendRawTransaction(signed.serialize(), {
+      skipPreflight: !this.simulateBeforeSend,
+    });
     await this.connection.confirmTransaction(sig, this.commitment);
     return sig;
   }

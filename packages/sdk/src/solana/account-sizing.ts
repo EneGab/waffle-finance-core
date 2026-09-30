@@ -151,6 +151,14 @@ export interface AccountLayoutSpec {
 }
 
 /**
+ * Where to fix a bad layout. Named in the self-check's error message so a
+ * failed import says which file to open, instead of leaving the caller to
+ * search for the one place account sizes are defined.
+ */
+export const ANCHOR_LAYOUT_TABLE_SOURCE =
+  "packages/sdk/src/solana/account-sizing.ts (SOLANA_ANCHOR_ACCOUNT_LAYOUTS)";
+
+/**
  * Every Solana account this SDK knows how to size.
  *
  * This table — not any exported constant — is the definition. Adding a field
@@ -263,9 +271,35 @@ export function validateAccountLayouts(): string[] {
   return problems;
 }
 
+/**
+ * Run the layout self-check at import time.
+ *
+ * A malformed layout table is a *packaging* bug, not a runtime condition: the
+ * table is a literal in this file, so nothing but a bad edit can break it. If
+ * it ever is broken, every derived size — and therefore every rent figure and
+ * every post-init length check — is wrong, and the failure would otherwise
+ * surface as a confusing on-chain "already in use" or a truncated account
+ * discovered by a user. Failing at import moves the diagnostic to the import
+ * stack, naming the account and the field at fault.
+ */
+const LAYOUT_PROBLEMS = validateAccountLayouts();
+if (LAYOUT_PROBLEMS.length > 0) {
+  throw new Error(
+    `Invalid Solana account layout table in ${ANCHOR_LAYOUT_TABLE_SOURCE}. ` +
+    `Every account size in this SDK is derived from it, so this must be fixed ` +
+    `before any transaction is built:\n  - ${LAYOUT_PROBLEMS.join("\n  - ")}`
+  );
+}
+
 // ── Errors ──────────────────────────────────────────────────────────────────
 
-/** Machine-readable discriminants for every failure this module raises. */
+/**
+ * Machine-readable discriminants for every failure this module raises.
+ *
+ * These are the client-side equivalent of an Anchor program's `#[error_code]`
+ * enum: one variant per check, so a caller can branch on *which* invariant
+ * failed rather than pattern-matching a message string.
+ */
 export type SolanaAccountInitErrorCode =
   /** Declared size and observed size disagree. */
   | "InvalidAccountSize"
@@ -275,9 +309,13 @@ export type SolanaAccountInitErrorCode =
   | "AccountAlreadyInitialized"
   /** Lamports present but no data, or data present but under rent, or vice versa. */
   | "UnexpectedAccountBalance"
-  /** Post-init verification of a freshly created account failed. */
+  /** The account is owned by a program other than the expected one. */
+  | "UnexpectedAccountOwner"
+  /** The account holds fewer lamports than the rent-exempt minimum. */
+  | "AccountNotRentExempt"
+  /** Post-init verification found no account where one was required. */
   | "AccountInitVerificationFailed"
-  /** `simulate()` reported a failure; logs are attached. */
+  /** `simulate()` reported a failure, or the simulation RPC call itself failed. */
   | "SimulationFailed";
 
 /** Base class so callers can catch every init-robustness failure at once. */
@@ -358,6 +396,44 @@ export class UnexpectedAccountBalanceError extends SolanaAccountInitError {
   }
 }
 
+/**
+ * An account at the expected address is owned by a different program.
+ *
+ * Distinct from `UnexpectedAccountBalance` because the remedy differs: a
+ * pre-funded address needs draining, whereas a foreign owner means the program
+ * id or the PDA seeds are wrong and *no* transaction against this program will
+ * ever touch that account.
+ */
+export class UnexpectedAccountOwnerError extends SolanaAccountInitError {
+  constructor(
+    message: string,
+    context: Record<string, unknown> = {},
+    simulationLogs?: string[]
+  ) {
+    super("UnexpectedAccountOwner", message, context, simulationLogs);
+    this.name = "UnexpectedAccountOwnerError";
+  }
+}
+
+/**
+ * An account holds fewer lamports than the rent-exempt minimum for its size.
+ *
+ * Solana's runtime does not reject such an account; it *purges* it. A
+ * transaction can therefore confirm and still leave an account that silently
+ * disappears, which is why this is checked explicitly rather than inferred
+ * from a successful transaction.
+ */
+export class AccountNotRentExemptError extends SolanaAccountInitError {
+  constructor(
+    message: string,
+    context: Record<string, unknown> = {},
+    simulationLogs?: string[]
+  ) {
+    super("AccountNotRentExempt", message, context, simulationLogs);
+    this.name = "AccountNotRentExemptError";
+  }
+}
+
 /** Post-initialisation verification failed: the account is not what it must be. */
 export class AccountInitVerificationError extends SolanaAccountInitError {
   constructor(
@@ -367,6 +443,26 @@ export class AccountInitVerificationError extends SolanaAccountInitError {
   ) {
     super("AccountInitVerificationFailed", message, context, simulationLogs);
     this.name = "AccountInitVerificationError";
+  }
+}
+
+/**
+ * `simulateTransaction` rejected the transaction, or the RPC call to simulate
+ * it failed outright.
+ *
+ * Distinct from {@link AccountInitVerificationError}: nothing has been created
+ * yet, so this is a *pre-submission* rejection and the account is untouched.
+ * The program logs are attached — they are the only thing that distinguishes an
+ * under-funded payer from a re-used account from a timelock violation on-chain.
+ */
+export class SimulationFailedError extends SolanaAccountInitError {
+  constructor(
+    message: string,
+    context: Record<string, unknown> = {},
+    simulationLogs?: string[]
+  ) {
+    super("SimulationFailed", message, context, simulationLogs);
+    this.name = "SimulationFailedError";
   }
 }
 
@@ -431,10 +527,15 @@ export function assertAccountSize(
  * `ACCOUNT_STORAGE_OVERHEAD_RENT (128 B) + size * lamports_per_byte_year` and
  * both terms are cluster parameters that change at the runtime's discretion.
  *
- * Reference (mainnet-beta, 3480 lamports/byte-year): 890_880 lamports at 0
- * bytes, ~1_258_560 for a 16-byte registry, ~2_039_280 for the 227-byte
- * `HtlcOrder`. Those are documentation values; this function is the only
- * supported source.
+ * Reference (mainnet-beta, 3480 lamports/byte-year, 2.0-year threshold,
+ * 128-byte storage overhead) — computed with {@link referenceRentExemptMinimum}
+ * and pinned by `test/solana-account-sizing.test.ts`:
+ *
+ *   • 0 bytes (the 128-byte overhead alone) →    890_880 lamports
+ *   • 16 bytes (`OrderRegistry`, 8 + 8 u64)   →  1_002_240 lamports
+ *   • 227 bytes (`HtlcOrder`, 8 + 219 fields)  →  2_470_800 lamports
+ *
+ * Those are documentation values; this function is the only supported source.
  */
 export async function getRentExemptMinimum(
   connection: Pick<Connection, "getMinimumBalanceForRentExemption">,
@@ -559,11 +660,16 @@ export function classifyUninitialisedAccount(
   const owner = accountInfo.owner.toBase58();
   const dataLength = accountInfo.data.length;
 
-  if (expectedOwner && !accountInfo.owner.equals(expectedOwner)) {
-    return { kind: "foreign", lamports, dataLength, owner };
-  }
+  // Zero data must be tested *before* the owner. An address that merely holds
+  // lamports is created by the System Program, so checking the owner first
+  // would report a pre-funded PDA as `foreign` and send the operator looking
+  // for a program-id or seed problem that does not exist. The remedy for a
+  // pre-funded address is to drain it, so that is what must be reported.
   if (dataLength === 0) {
     return { kind: "prefunded", lamports, owner };
+  }
+  if (expectedOwner && !accountInfo.owner.equals(expectedOwner)) {
+    return { kind: "foreign", lamports, dataLength, owner };
   }
   return { kind: "initialised", lamports, dataLength, owner };
 }
@@ -576,8 +682,17 @@ export function classifyUninitialisedAccount(
  *   overwrite of live state. Both are failures; neither is a warning.
  * - `prefunded` → `UnexpectedAccountBalanceError`, naming the lamports found
  *   and the account, so an operator can drain the address and retry.
- * - `foreign` → `UnexpectedAccountBalanceError`, naming both owners.
+ * - `foreign` → `UnexpectedAccountOwnerError`, naming both owners.
  * - `absent` → passes.
+ *
+ * This function is the documented answer to "what if the target address already
+ * holds lamports?". The behaviour is **deterministic and fail-closed**: a
+ * pre-funded PDA is rejected outright, never topped up, because the program's
+ * `init` cannot adopt an existing account anyway — Solana's `create_account`
+ * requires a zero-lamport, unallocated account, so the transaction would revert
+ * with `already in use` and burn the fee. Failing client-side names the cause
+ * and the remedy (drain the address, then retry) instead of hiding it behind a
+ * runtime error.
  */
 export function assertAccountIsUninitialised(
   state: UninitialisedState,
@@ -611,7 +726,7 @@ export function assertAccountIsUninitialised(
       );
 
     case "foreign":
-      throw new UnexpectedAccountBalanceError(
+      throw new UnexpectedAccountOwnerError(
         `${account} is owned by ${state.owner}` +
         (options.programId ? `, not the expected program ${options.programId}` : "") +
         `, and holds ${state.dataLength} bytes / ${state.lamports} lamports. ` +
@@ -645,14 +760,14 @@ export interface VerifiedAccount {
  * Runs after confirmation, because a confirmed transaction is not proof of a
  * correct account: a program can exit successfully having written a truncated
  * account, and an account can fall below the rent-exempt minimum later. Four
- * invariants are checked, each with its own diagnostic:
+ * invariants are checked, each with its own error variant so a caller can
+ * branch on which one failed:
  *
- *   1. the account exists
- *   2. it is owned by the expected program
- *   3. its data length matches the layout
- *   4. its balance is at or above the rent-exempt minimum
- *
- * Throws `AccountInitVerificationError` on the first failure.
+ *   1. the account exists → `AccountInitVerificationError`
+ *   2. it is owned by the expected program → `UnexpectedAccountOwnerError`
+ *   3. its data length matches the layout → `InvalidAccountSizeError`
+ *   4. its balance is at or above the rent-exempt minimum →
+ *      `AccountNotRentExemptError`
  */
 export async function verifyInitialisedAccount(
   connection: Pick<Connection, "getAccountInfo" | "getMinimumBalanceForRentExemption">,
@@ -689,7 +804,7 @@ export async function verifyInitialisedAccount(
 
   const actualOwner = accountInfo.owner.toBase58();
   if (!accountInfo.owner.equals(options.expectedOwner)) {
-    throw new AccountInitVerificationError(
+    throw new UnexpectedAccountOwnerError(
       `${spec.label} ${account} is owned by ${actualOwner}, expected ` +
       `${options.expectedOwner.toBase58()}. The address is not an account of the ` +
       `HTLC program — check SOLANA_HTLC_PROGRAM and the PDA seeds ` +
@@ -704,7 +819,7 @@ export async function verifyInitialisedAccount(
 
   const dataLength = accountInfo.data.length;
   if (dataLength !== expectedSize) {
-    throw new AccountInitVerificationError(
+    throw new InvalidAccountSizeError(
       `${spec.label} account size mismatch on ${account}: expected exactly ` +
       `${expectedSize} bytes (${ANCHOR_DISCRIMINATOR_SIZE} discriminator + ` +
       `${fieldsSizeFor(spec)} field bytes), found ${dataLength}. ` +
@@ -722,7 +837,7 @@ export async function verifyInitialisedAccount(
   const lamports = BigInt(accountInfo.lamports);
   const required = rentExemptMinimum + (options.expectedExtraLamports ?? 0n);
   if (lamports < required) {
-    throw new AccountInitVerificationError(
+    throw new AccountNotRentExemptError(
       `${spec.label} ${account} holds ${lamports} lamports, below the required ` +
       `${required} (rent-exempt minimum ${rentExemptMinimum} for ${expectedSize} bytes` +
       (options.expectedExtraLamports
@@ -790,8 +905,8 @@ function formatSimulationErr(err: unknown): string {
  * simulates explicitly first so the logs reach the caller and the operator,
  * and never swallows a simulation failure.
  *
- * Throws `AccountInitVerificationError` (code `SimulationFailed`) with the
- * logs attached when the simulation reports an error.
+ * Throws `SimulationFailedError` with the logs attached when the simulation
+ * reports an error or the RPC call to simulate fails.
  */
 export async function simulateTransactionOrThrow(
   connection: SimulationCapableConnection,
@@ -804,7 +919,7 @@ export async function simulateTransactionOrThrow(
   } catch (err) {
     // An RPC-level failure is not a program failure, but it must not be
     // mistaken for success either — rethrow with the RPC message attached.
-    throw new AccountInitVerificationError(
+    throw new SimulationFailedError(
       `Failed to simulate the transaction for ${options.account}: ` +
       `${err instanceof Error ? err.message : String(err)}. ` +
       `The transaction was not submitted.`,
@@ -822,7 +937,7 @@ export async function simulateTransactionOrThrow(
 
   const logs = value?.logs ?? [];
   if (value?.err) {
-    throw new AccountInitVerificationError(
+    throw new SimulationFailedError(
       `Simulation failed for ${options.account}: ${formatSimulationErr(value.err)}` +
       (logs.length > 0
         ? `\nProgram logs:\n  ${logs.join("\n  ")}`
@@ -856,8 +971,19 @@ export const MAINNET_RENT = {
 /**
  * Reference rent-exempt minimum for `size` bytes under {@link MAINNET_RENT}.
  * Documentation and test-oracle only.
+ *
+ * This reproduces the runtime's own formula,
+ * `(size + ACCOUNT_STORAGE_OVERHEAD) * lamports_per_byte_year * threshold`, in
+ * two terms. Written the other way round — `size * rate + zeroByteExemption` —
+ * it is arithmetically identical, which is why the totals below are exact and
+ * not rounded.
  */
 export function referenceRentExemptMinimum(size: number): bigint {
+  if (!Number.isInteger(size) || size < 0) {
+    throw new RangeError(
+      `referenceRentExemptMinimum: size must be a non-negative integer, got ${size}`
+    );
+  }
   return (
     MAINNET_RENT.zeroByteExemption +
     BigInt(size) * MAINNET_RENT.lamportsPerByteYear * BigInt(MAINNET_RENT.exemptionThresholdYears)
