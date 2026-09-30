@@ -332,8 +332,9 @@ function decodeBase58(input: string): Uint8Array {
   for (const char of input) {
     const value = BASE58_ALPHABET.indexOf(char);
     if (value === -1) {
+      // The offending character is not included: it is a byte of the secret.
       throw new SolanaSubmissionError(
-        `SOLANA_RELAYER_PRIVATE_KEY is not valid base-58: unexpected character "${char}"`
+        "SOLANA_RELAYER_PRIVATE_KEY is not valid base-58: it contains a character outside the base-58 alphabet"
       );
     }
     let carry = value;
@@ -401,10 +402,16 @@ function loadRelayerKeypair(privateKey: string, log: Logger): Keypair | undefine
 
     return Keypair.fromSecretKey(secretKey);
   } catch (error) {
+    // Deliberately NOT logging `error`: a JSON.parse failure in V8 echoes the
+    // offending input into its message, which would put a slice of
+    // SOLANA_RELAYER_PRIVATE_KEY into the logs. The error class is enough to
+    // tell a malformed key from a bad length, and the operator has the source
+    // of the value anyway.
     log.error(
-      { err: error },
+      { errorType: error instanceof Error ? error.name : typeof error },
       "SOLANA_RELAYER_PRIVATE_KEY could not be loaded. The relayer will start " +
-        "but cannot sign or settle orders."
+        "but cannot sign or settle orders. Set it to a 64-byte secret key as " +
+        "base-58, 0x-hex, or a JSON byte array."
     );
     return undefined;
   }
