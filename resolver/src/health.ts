@@ -1,4 +1,5 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { type Logger } from "pino";
 import {
   describeSupportPolicy,
   supportsAction,
@@ -6,14 +7,16 @@ import {
 } from "@wafflefinance/config";
 import type { ResolverConfig } from "./config.js";
 import type { Supervisor } from "./supervisor.js";
+import type { ResolverLifecycle } from "./lifecycle.js";
 import { buildSupportPolicy } from "./support.js";
-import { ResolverTelemetryCollector } from "./telemetry.js";
+import { ResolverTelemetryCollector, globalStalenessMonitor } from "./telemetry.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ResolverHealthDeps {
   cfg: ResolverConfig;
   supervisor: Supervisor;
+  lifecycle?: ResolverLifecycle;
   startedAt?: number;
   /**
    * The runtime's declared capabilities.  Defaults to the policy derived from
@@ -23,6 +26,11 @@ export interface ResolverHealthDeps {
   policy?: SupportPolicy;
   /** Chains to report liveness for on GET /telemetry. Defaults to ["ethereum", "soroban"]. */
   telemetryChains?: string[];
+  /**
+   * Optional logger.  When provided, the telemetry collector emits a log line
+   * on every resolver liveness state transition (connected/degraded/stale/inactive).
+   */
+  log?: Logger;
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -65,13 +73,17 @@ function readinessChecks(deps: ResolverHealthDeps, policy: SupportPolicy) {
   // error.  Stopping due to a signal is a deliberate action and is reported
   // as ok=true with detail="stopping" so orchestration systems don't
   // immediately restart the pod before teardown completes.
+  // Use lifecycle if available, otherwise fall back to supervisor state
+  const lifecycleState = deps.lifecycle?.state;
   const supervisorState = supervisor.state;
+  const effectiveState = lifecycleState ?? supervisorState;
+
   const supervisorOk =
-    supervisorState === "idle" ||
-    supervisorState === "running" ||
-    supervisorState === "restarting" ||
-    supervisorState === "stopping" ||
-    supervisorState === "stopped";
+    effectiveState === "idle" ||
+    effectiveState === "running" ||
+    effectiveState === "restarting" ||
+    effectiveState === "stopping" ||
+    effectiveState === "stopped";
 
   const checks = [
     {
@@ -112,14 +124,18 @@ function readinessChecks(deps: ResolverHealthDeps, policy: SupportPolicy) {
 // ── Server factory ────────────────────────────────────────────────────────────
 
 /**
- * Create an HTTP server exposing three health endpoints:
+ * Create an HTTP server exposing health endpoints:
  *
- * - `GET /healthz`   — liveness probe (always 200 while the process is alive).
- * - `GET /readyz`    — readiness probe (503 when a required dependency check fails).
- * - `GET /health`    — combined health payload with supervisor state and restart count.
- * - `GET /telemetry` — resolver runtime telemetry (connected/degraded/stale/inactive).
- * - `GET /support`   — the runtime's declared support policy (chains, actions,
- *                      routes, and the routes it will refuse).
+ * - `GET /healthz`        — liveness probe (always 200 while the process is alive).
+ * - `GET /readyz`         — readiness probe (503 when a required dependency check fails).
+ * - `GET /health`         — combined health payload with supervisor state and restart count.
+ * - `GET /telemetry`      — resolver runtime telemetry (connected/degraded/stale/inactive).
+ * - `GET /support`        — the runtime's declared support policy (chains, actions,
+ *                           routes, and the routes it will refuse).
+ * - `GET /listener-health`— per-chain listener health: missed-event batches, consecutive
+ *                           failures, staleness seconds, and health state per chain.
+ *                           Returns 503 when any chain is stale, degraded, or stopped.
+ *                           See issue #769.
  */
 export function createResolverHealthServer(deps: ResolverHealthDeps): Server {
   const startedAt = deps.startedAt ?? Date.now();
@@ -176,21 +192,24 @@ export function createResolverHealthServer(deps: ResolverHealthDeps): Server {
     // Kubernetes probes directly (too verbose for high-frequency polling).
     if (req.url === "/health") {
       const checks = readinessChecks(deps, policy);
-      const state = deps.supervisor.state;
+      const lifecycleState = deps.lifecycle?.state;
+      const supervisorState = supervisor.state;
+      const effectiveState = lifecycleState ?? supervisorState;
       const dependencyFailures = checks.filter((c) => !c.ok);
 
       const overallStatus =
-        state === "failed"
+        effectiveState === "failed"
           ? "unhealthy"
-          : state === "stopping" || state === "stopped"
+          : effectiveState === "stopping" || effectiveState === "stopped"
             ? "stopping"
             : dependencyFailures.length > 0
               ? "degraded"
               : "healthy";
 
-      json(res, state === "failed" ? 503 : 200, {
+      json(res, effectiveState === "failed" ? 503 : 200, {
         status: overallStatus,
-        supervisorState: state,
+        lifecycleState: effectiveState,
+        supervisorState: supervisorState,
         restarts: deps.supervisor.restarts,
         ...servicePayload(startedAt),
         checks,
@@ -204,7 +223,7 @@ export function createResolverHealthServer(deps: ResolverHealthDeps): Server {
     // job" without reading raw logs. See src/telemetry.ts.
     if (req.url === "/telemetry") {
       telemetryCollector
-        .collect({ supervisor: deps.supervisor, chains: telemetryChains })
+        .collect({ supervisor: deps.supervisor, chains: telemetryChains, log: deps.log })
         .then((snapshot) => {
           json(res, snapshot.state === "inactive" ? 503 : 200, {
             ...snapshot,
@@ -226,6 +245,66 @@ export function createResolverHealthServer(deps: ResolverHealthDeps): Server {
       const summary = describeSupportPolicy(policy);
       json(res, summary.actionable ? 200 : 503, {
         ...summary,
+        ...servicePayload(startedAt),
+      });
+      return;
+    }
+
+    // ── /listener-health — per-chain missed-event and staleness detail ────
+    // Provides a focused view of the per-chain listener health state for
+    // operators who need more detail than /telemetry's coarse state.
+    // Returns 200 when all listeners are healthy, 503 when any chain has a
+    // non-healthy state (stale, degraded, or stopped).
+    //
+    // This endpoint is specifically designed to satisfy issue #769:
+    // "Resolver missed-event behavior is visible from the monitoring interface,
+    // and degraded states are not hidden behind generic health responses."
+    if (req.url === "/listener-health") {
+      const staleAfterSeconds = deps.cfg.soroban?.pollIntervalMs
+        ? Math.max(300, (deps.cfg.soroban.pollIntervalMs / 1000) * 10)
+        : 300;
+
+      const chainData = globalStalenessMonitor.snapshotChainData();
+      const nowSeconds = Math.floor(Date.now() / 1000);
+
+      const chains = chainData.map((c) => {
+        const staleness = c.lastHealthyTickSeconds !== null
+          ? Math.max(0, nowSeconds - c.lastHealthyTickSeconds)
+          : null;
+        const isStale = staleness === null || staleness > staleAfterSeconds;
+        const healthState =
+          !c.isActive
+            ? "stopped"
+            : c.consecutiveFailures >= 3
+              ? "degraded"
+              : isStale
+                ? "stale"
+                : "healthy";
+
+        return {
+          chain:              c.chain,
+          healthState,
+          isActive:           c.isActive,
+          staleness_seconds:  staleness,
+          staleAfterSeconds,
+          consecutiveFailures: c.consecutiveFailures,
+          missedEventBatches: c.missedEventBatches,
+          lastHealthyTickAt: c.lastHealthyTickSeconds !== null
+            ? new Date(c.lastHealthyTickSeconds * 1000).toISOString()
+            : null,
+        };
+      });
+
+      const allHealthy = chains.every((c) => c.healthState === "healthy");
+      const unhealthyChains = chains.filter((c) => c.healthState !== "healthy").map((c) => c.chain);
+      const totalMissedBatches = chains.reduce((sum, c) => sum + c.missedEventBatches, 0);
+
+      json(res, allHealthy ? 200 : 503, {
+        status: allHealthy ? "healthy" : "degraded",
+        allHealthy,
+        unhealthyChains,
+        totalMissedEventBatches: totalMissedBatches,
+        chains,
         ...servicePayload(startedAt),
       });
       return;

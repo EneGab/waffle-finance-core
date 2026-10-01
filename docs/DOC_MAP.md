@@ -1,7 +1,7 @@
 # Documentation Map
 
 > **Owner:** Engineering team  
-> **Last audited:** 2026-09-24  
+> **Last audited:** 2026-09-25  
 > **Purpose:** Single index of every documentation file in the repository.
 > Use this to find the canonical reference for any topic and to understand
 > which docs are actively maintained versus archived.
@@ -34,13 +34,17 @@ If you add a new document, add a row here in the same PR.
 | File | Status | Owner | Subject |
 |------|--------|-------|---------|
 | `docs/DOC_MAP.md` | current | Engineering | **This file** — canonical index of all documentation |
-| `docs/ARCHITECTURE.md` | current | Engineering | System architecture: package topology, chain integrations, order lifecycle |
+| `docs/ARCHITECTURE.md` | current | Engineering | System architecture: package topology, chain integrations, order lifecycle, runtime assumptions, event replay, service restart behavior, cross-chain invariants, degraded network behavior |
+| `docs/DEBUGGING_GUIDE.md` | current | Engineering | **Incident triage guide** — per-service debugging paths, diagnostic matrix for network failure, DB drift, and stuck orders; log and telemetry reference |
+| `docs/TECHNICAL_DEBT_MAINTENANCE.md` | current | Engineering | **Debt maintenance strategy** — triage rubric, category definitions, priority model, sprint integration, and full mapping of existing TD items |
+| `docs/RELEASE_AUTHORITY_MAP.md` | current | Engineering | **Release doc authority map** — canonical source per release topic, document inventory, resolved contradictions, cross-reference rules |
 | `docs/COMMANDS.md` | current | Engineering | **Canonical command map** — which command belongs to which package and what it validates; CI-enforced |
 | `docs/QUALITY_GATE.md` | current | Engineering | Repo-wide quality gate spec: alignment checks, known drift, contributor contract |
 | `docs/TECHNICAL_DEBT.md` | current | Engineering | Technical debt register (TD-000 through TD-080) with severity ratings |
 | `docs/RELEASE_CONTRACT.md` | current | Engineering | Per-package build target, artifact, environment assumptions, and verification gaps |
 | `docs/DEVELOPMENT.md` | current | Engineering | Local development setup, env vars, troubleshooting |
 | `docs/OPERATIONS.md` | current | Operations | Production operations: deployment topology, health endpoints, runbook pointers |
+| `docs/ALERTING.md` | current | Operations | **Alerting runbook** — Prometheus alert rules and operational thresholds for stale-order cleanup, expiry, and recovery metrics |
 | `docs/HEALTH_DASHBOARD.md` | current | Operations | Health and readiness endpoint reference for all services |
 | `docs/CONTRIBUTOR_HANDBOOK.md` | current | Engineering | Contribution guidelines, code review norms, branch strategy |
 | `docs/DEPENDENCY_POLICY.md` | current | Engineering | Dependency pinning policy, upgrade procedure, audit-critical packages |
@@ -100,9 +104,10 @@ If you add a new document, add a row here in the same PR.
 | `packages/sdk/README.md` | current | Engineering | SDK usage, subpath exports, build |
 | `packages/sdk/ASSET_MAPPING_CONTRACT.md` | current | Engineering | Asset mapping contract between SDK and chain clients |
 | `packages/sdk/ROUTE_REGISTRY.md` | current | Engineering | Route registry spec |
-| `packages/sdk/TREE_SHAKING.md` | current | Engineering | SDK bundle size and tree-shaking guidance |
+| `packages/sdk/TREE_SHAKING.md` | current | Engineering | SDK intended package shape, per-entry import cost, subpath isolation (#731) |
 | `soroban/README.md` | current | Engineering | Soroban contracts: build, test, deploy, TS bindings |
 | `soroban/docs/` | current | Engineering | Soroban-specific design docs |
+| `docs/SOROBAN_OPERATOR_GUIDE.md` | current | Operations | Soroban trust model, lifecycle, readiness checks, RPC degradation, recovery |
 | `frontend/CACHING_STRATEGY.md` | current | Engineering | Frontend caching approach |
 | `frontend/FEATURE_FLAGS.md` | current | Engineering | Frontend feature flag usage |
 | `frontend/MAINTAINABILITY.md` | current | Engineering | Frontend code maintainability guidelines |
@@ -117,10 +122,13 @@ If you add a new document, add a row here in the same PR.
 |-------|-------|
 | Which `pnpm` command to run for a package | `docs/COMMANDS.md` |
 | Release process, version bumps, publishing | `RELEASE_POLICY.md` + `docs/RELEASE_CONTRACT.md` |
+| Which release doc is authoritative for a topic | `docs/RELEASE_AUTHORITY_MAP.md` |
 | Cross-package release gate / impact matrix | `docs/RELEASE_CHECKLIST_MULTI_PACKAGE.md` |
 | Quality gate and doc drift checks | `docs/QUALITY_GATE.md` |
-| Technical debt items | `docs/TECHNICAL_DEBT.md` |
-| System architecture | `docs/ARCHITECTURE.md` |
+| Technical debt items (the register) | `docs/TECHNICAL_DEBT.md` |
+| Technical debt triage, priority model, sprint planning | `docs/TECHNICAL_DEBT_MAINTENANCE.md` |
+| System architecture, runtime assumptions, cross-chain invariants | `docs/ARCHITECTURE.md` |
+| Debugging a failing service during an incident | `docs/DEBUGGING_GUIDE.md` |
 | Local development setup | `docs/DEVELOPMENT.md` |
 | Production operations | `docs/OPERATIONS.md` |
 | Health endpoints | `docs/HEALTH_DASHBOARD.md` |
