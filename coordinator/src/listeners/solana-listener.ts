@@ -6,13 +6,10 @@ import {
   observeListenerEventProcessing,
   recordListenerProgress,
   workflowDispatchDecisions,
-} from "../metrics.js";
-import { isSolanaPlaceholder } from "../config.js";
-import { decideDispatch } from "../services/workflow-priority-policy.js";
-import {
-  SolanaRpcProvider,
-  createSolanaRpcProvider,
-} from "@wafflefinance/sdk";
+} from '../metrics.js';
+import { isSolanaPlaceholder } from '../config.js';
+import { decideDispatch } from '../services/workflow-priority-policy.js';
+import { SolanaRpcProvider, createSolanaRpcProvider } from '@wafflefinance/sdk';
 
 /**
  * Confirmation level constants for Solana commitment model.
@@ -20,7 +17,7 @@ import {
  * - confirmed:  voted on by supermajority, very likely final (~0.5s)
  * - finalized:  max lockout reached, irreversible (~12s)
  */
-export const CONFIRMATION_LEVELS = ["processed", "confirmed", "finalized"] as const;
+export const CONFIRMATION_LEVELS = ['processed', 'confirmed', 'finalized'] as const;
 export type ConfirmationLevel = (typeof CONFIRMATION_LEVELS)[number];
 
 /**
@@ -119,11 +116,11 @@ export class SolanaListener {
     if (isSolanaPlaceholder(this.cfg.solana.programId)) {
       this.log.warn(
         { programId: this.cfg.solana.programId },
-        "SOLANA_HTLC_PROGRAM is a placeholder — Solana listener disabled"
+        'SOLANA_HTLC_PROGRAM is a placeholder — Solana listener disabled'
       );
       return;
     }
-    this.log.info({ program: this.cfg.solana.programId }, "Solana listener starting");
+    this.log.info({ program: this.cfg.solana.programId }, 'Solana listener starting');
     void this.loop();
   }
 
@@ -159,10 +156,10 @@ export class SolanaListener {
       try {
         await this.poll(programPk);
       } catch (err) {
-        this.log.warn({ err }, "Solana poll failed");
+        this.log.warn({ err }, 'Solana poll failed');
       }
 
-      await new Promise<void>((r) => {
+      await new Promise<void>(r => {
         this.timeoutId = setTimeout(r, this.cfg.pollIntervalMs);
       });
     }
@@ -175,8 +172,8 @@ export class SolanaListener {
     // All RPC calls are routed through the provider so a degraded primary
     // endpoint transparently falls back to a configured secondary (#713).
     const [finalizedSlot, confirmedSlot] = await Promise.all([
-      this.rpcProvider.withFallback((conn) => conn.getSlot("finalized"), "getSlot(finalized)"),
-      this.rpcProvider.withFallback((conn) => conn.getSlot("confirmed"), "getSlot(confirmed)"),
+      this.rpcProvider.withFallback(conn => conn.getSlot('finalized'), 'getSlot(finalized)'),
+      this.rpcProvider.withFallback(conn => conn.getSlot('confirmed'), 'getSlot(confirmed)'),
     ]);
 
     // Report RPC provider health for degraded-mode detection.
@@ -184,7 +181,7 @@ export class SolanaListener {
     if (providerHealth.degraded) {
       this.log.warn(
         { activeEndpoint: providerHealth.activeEndpoint, endpoints: providerHealth.endpoints },
-        "Solana RPC provider is degraded — running on fallback endpoint"
+        'Solana RPC provider is degraded — running on fallback endpoint'
       );
     }
 
@@ -192,15 +189,15 @@ export class SolanaListener {
     if (this.lastSlot > 0 && confirmedSlot < this.lastSlot - REGRESSION_THRESHOLD) {
       this.log.warn(
         { confirmedSlot, lastSlot: this.lastSlot, finalizedSlot },
-        "Solana slot regression detected"
+        'Solana slot regression detected'
       );
       await this.handleRegression(confirmedSlot);
     }
 
     // --- Step c: fetch new signatures at `confirmed` and queue them --------
     const sigs = await this.rpcProvider.withFallback(
-      (conn) => conn.getSignaturesForAddress(programPk, { limit: 50 }),
-      "getSignaturesForAddress"
+      conn => conn.getSignaturesForAddress(programPk, { limit: 50 }),
+      'getSignaturesForAddress'
     );
 
     for (const sigInfo of sigs) {
@@ -213,11 +210,17 @@ export class SolanaListener {
       // processed.  This prevents double-queueing on overlapping poll windows
       // and on restart when the same signatures are returned again.
       if (this.isDuplicate(sigInfo.signature)) {
-        this.log.debug({ sig: sigInfo.signature }, "Solana event duplicate skipped (in-process cache) during queue");
+        this.log.debug(
+          { sig: sigInfo.signature },
+          'Solana event duplicate skipped (in-process cache) during queue'
+        );
         continue;
       }
       if (this.isInPendingSlots(sigInfo.signature)) {
-        this.log.debug({ sig: sigInfo.signature, slot: sigInfo.slot }, "Solana event already queued in pendingSlots — skipping");
+        this.log.debug(
+          { sig: sigInfo.signature, slot: sigInfo.slot },
+          'Solana event already queued in pendingSlots — skipping'
+        );
         continue;
       }
 
@@ -233,7 +236,7 @@ export class SolanaListener {
 
     // Update lastSlot to the highest slot seen across all returned sigs.
     if (sigs.length > 0) {
-      this.lastSlot = Math.max(this.lastSlot, ...sigs.map((s) => s.slot));
+      this.lastSlot = Math.max(this.lastSlot, ...sigs.map(s => s.slot));
     } else if (this.lastSlot === 0) {
       // First poll with no events yet — anchor to current confirmed slot.
       this.lastSlot = confirmedSlot;
@@ -304,8 +307,8 @@ export class SolanaListener {
       }
     }
 
-    recordListenerProgress("solana", this.lastSlot, confirmedSlot);
-    observeListenerEventProcessing("solana", "poll", startedAt);
+    recordListenerProgress('solana', this.lastSlot, confirmedSlot);
+    observeListenerEventProcessing('solana', 'poll', startedAt);
   }
 
   // ---------------------------------------------------------------------------
@@ -376,7 +379,7 @@ export class SolanaListener {
     if (droppedPending > 0) {
       this.log.warn(
         { regressionStart, regressionEnd, droppedPending },
-        "dropped pending transactions in regressed slot range"
+        'dropped pending transactions in regressed slot range'
       );
     }
 
@@ -390,10 +393,10 @@ export class SolanaListener {
           await this.orders.rollbackSrcLock(publicId);
           this.log.warn(
             { publicId, slot, regressionStart, regressionEnd },
-            "rolled back src lock due to Solana slot regression"
+            'rolled back src lock due to Solana slot regression'
           );
         } catch (err) {
-          this.log.warn({ err, publicId, slot }, "could not rollback src lock for regressed slot");
+          this.log.warn({ err, publicId, slot }, 'could not rollback src lock for regressed slot');
         }
       }
       this.processedBySlot.delete(slot);
@@ -433,9 +436,15 @@ export class SolanaListener {
     const payload: Record<string, unknown> = {};
 
     for (const line of logs) {
-      if (line.includes("OrderCreated"))  { eventType = "OrderCreated"; }
-      if (line.includes("OrderClaimed"))  { eventType = "OrderClaimed"; }
-      if (line.includes("OrderRefunded")) { eventType = "OrderRefunded"; }
+      if (line.includes('OrderCreated')) {
+        eventType = 'OrderCreated';
+      }
+      if (line.includes('OrderClaimed')) {
+        eventType = 'OrderClaimed';
+      }
+      if (line.includes('OrderRefunded')) {
+        eventType = 'OrderRefunded';
+      }
 
       // Try to pick up a JSON payload from any log line (Anchor emits them as
       // "Program log: {.}" or "Program data: {.}").
@@ -443,18 +452,20 @@ export class SolanaListener {
       if (jsonMatch) {
         try {
           Object.assign(payload, JSON.parse(jsonMatch[0]));
-        } catch { /* not JSON - skip */ }
+        } catch {
+          /* not JSON - skip */
+        }
       }
     }
 
     if (!eventType) return this.completeSignature(sig);
 
-    this.log.info({ sig, event: eventType, payload }, "Solana HTLC event");
+    this.log.info({ sig, event: eventType, payload }, 'Solana HTLC event');
 
-    if (eventType === "OrderCreated") {
-      const hashlock = payload.hashlock as string | undefined;
-      const orderId  = payload.orderId  as string | undefined;
-      const timelock = payload.timelock as number | undefined;
+    if (eventType === 'OrderCreated') {
+      const hashlock = (payload.hashlock ?? payload.hash_lock) as string | undefined;
+      const orderId = (payload.orderId ?? payload.order_id) as string | undefined;
+      const timelock = (payload.timelock ?? payload.time_lock) as number | undefined;
 
       if (!hashlock || !orderId || timelock === null || timelock === undefined) {
         this.log.warn({ sig, payload }, "OrderCreated missing required fields - cannot record src lock");
@@ -536,8 +547,8 @@ export class SolanaListener {
       return this.completeSignature(sig);
     }
 
-    if (eventType === "OrderRefunded") {
-      const orderId = payload.orderId as string | undefined;
+    if (eventType === 'OrderRefunded') {
+      const orderId = (payload.orderId ?? payload.order_id) as string | undefined;
       if (orderId) {
         try {
           const order = await this.orders.findBySrcOrderId("solana", orderId);

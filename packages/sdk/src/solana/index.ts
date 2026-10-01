@@ -35,7 +35,7 @@ import {
   type TransactionSignature,
   type Commitment,
   type AccountMeta,
-} from "@solana/web3.js";
+} from '@solana/web3.js';
 
 import {
   HTLC_ORDER_DISCRIMINATOR,
@@ -46,10 +46,16 @@ import {
   IX_CLAIM_ORDER,
   IX_REFUND_ORDER,
   ORDER_SEED,
-} from "./idl/htlc.js";
+} from './idl/htlc.js';
 
-// Re-export the status enum for consumers without pulling it into local scope.
-export { OrderStatus } from "./idl/htlc.js";
+// Re-export the status enum and event interfaces for consumers without pulling them into local scope.
+export { OrderStatus } from './idl/htlc.js';
+export type {
+  AnchorOrderCreatedEvent,
+  AnchorOrderClaimedEvent,
+  AnchorOrderRefundedEvent,
+  AnchorHtlcEvent,
+} from './idl/htlc.js';
 
 // Import shared utilities for hex conversion and U64 LE serialisation.
 import {
@@ -58,7 +64,7 @@ import {
   readU64LE as sharedReadU64LE,
   readI64LE as sharedReadI64LE,
   hex32ToBuffer,
-} from "../shared-utils/index.js";
+} from '../shared-utils/index.js';
 
 // Account validation utilities (#715).
 import {
@@ -66,19 +72,16 @@ import {
   validateClaimOrderParams,
   validateRefundOrderParams,
   AccountValidationError,
-} from "./account-validation.js";
-import { validateRpcUrl, validateSolanaAddress } from "../config-validation.js";
+} from './account-validation.js';
+import { validateRpcUrl, validateSolanaAddress } from '../config-validation.js';
 
 export {
   validateCreateOrderParams,
   validateClaimOrderParams,
   validateRefundOrderParams,
   AccountValidationError,
-} from "./account-validation.js";
-export type {
-  AccountValidationCode,
-  AccountValidationResult,
-} from "./account-validation.js";
+} from './account-validation.js';
+export type { AccountValidationCode, AccountValidationResult } from './account-validation.js';
 
 export {
   getPhantomProvider,
@@ -105,6 +108,8 @@ export interface SolanaHTLCClientOptions {
   programId: string;
   /** Commitment level for reads/confirmations. */
   commitment?: Commitment;
+  /** Allow http URL for local sandboxes/test validators. */
+  allowHttp?: boolean;
   /**
    * When true, run pre-submission account metadata validation before sending
    * any transaction (#715).  Throws `AccountValidationError` when the
@@ -161,7 +166,7 @@ export type SolanaSigner = {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 /** Represents native SOL (no SPL mint). */
-export const NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112";
+export const NATIVE_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 // ── Serialisation helpers ──────────────────────────────────────────────────
 // Using shared utilities from ../shared-utils/index.js
@@ -178,14 +183,8 @@ const readI64LE = sharedReadI64LE;
  *
  * Seeds: [b"order", hashlock_bytes (32)]
  */
-function deriveOrderPda(
-  hashlockBytes: Buffer,
-  programId: PublicKey
-): [PublicKey, number] {
-  return PublicKey.findProgramAddressSync(
-    [ORDER_SEED, hashlockBytes],
-    programId
-  );
+function deriveOrderPda(hashlockBytes: Buffer, programId: PublicKey): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([ORDER_SEED, hashlockBytes], programId);
 }
 
 // ── Account deserialisation ────────────────────────────────────────────────
@@ -198,10 +197,7 @@ function deriveOrderPda(
  *  - The 8-byte discriminator does not match HTLC_ORDER_DISCRIMINATOR
  *  - The `version` byte is higher than IDL_VERSION (unknown layout)
  */
-export function deserialiseOrderAccount(
-  data: Buffer,
-  orderId: string
-): SolanaOrderData {
+export function deserialiseOrderAccount(data: Buffer, orderId: string): SolanaOrderData {
   // Minimum size: 8 (discriminator) + 219 (fields) = 227 bytes.
   if (data.length < HTLC_ORDER_ACCOUNT_SIZE) {
     throw new Error(
@@ -212,9 +208,7 @@ export function deserialiseOrderAccount(
   // Verify Anchor account discriminator.
   const disc = data.subarray(0, 8);
   if (!disc.equals(HTLC_ORDER_DISCRIMINATOR)) {
-    throw new Error(
-      `Invalid HTLCOrder discriminator: ${disc.toString("hex")}`
-    );
+    throw new Error(`Invalid HTLCOrder discriminator: ${disc.toString('hex')}`);
   }
 
   // All field offsets are relative to byte 8 (after the discriminator).
@@ -224,7 +218,7 @@ export function deserialiseOrderAccount(
   if (version > IDL_VERSION) {
     throw new Error(
       `HTLCOrder account version ${version} is newer than SDK IDL version ${IDL_VERSION}. ` +
-      "Update the SDK to parse this account."
+        'Update the SDK to parse this account.'
     );
   }
 
@@ -240,16 +234,12 @@ export function deserialiseOrderAccount(
     fields.subarray(FIELD_OFFSET.refundAddress, FIELD_OFFSET.refundAddress + 32)
   ).toBase58();
 
-  const mint = new PublicKey(
-    fields.subarray(FIELD_OFFSET.mint, FIELD_OFFSET.mint + 32)
-  ).toBase58();
+  const mint = new PublicKey(fields.subarray(FIELD_OFFSET.mint, FIELD_OFFSET.mint + 32)).toBase58();
 
   const amount = readU64LE(fields, FIELD_OFFSET.amount);
   const safetyDeposit = readU64LE(fields, FIELD_OFFSET.safetyDeposit);
 
-  const hashlock = bufferToHex(
-    fields.subarray(FIELD_OFFSET.hashlock, FIELD_OFFSET.hashlock + 32)
-  );
+  const hashlock = bufferToHex(fields.subarray(FIELD_OFFSET.hashlock, FIELD_OFFSET.hashlock + 32));
 
   const timelockBigInt = readI64LE(fields, FIELD_OFFSET.timelock);
   const timelock = Number(timelockBigInt);
@@ -264,9 +254,7 @@ export function deserialiseOrderAccount(
   const preimageTag = fields.readUInt8(FIELD_OFFSET.preimage);
   const preimage: HexString | null =
     preimageTag === 1
-      ? bufferToHex(
-          fields.subarray(FIELD_OFFSET.preimage + 1, FIELD_OFFSET.preimage + 33)
-        )
+      ? bufferToHex(fields.subarray(FIELD_OFFSET.preimage + 1, FIELD_OFFSET.preimage + 33))
       : null;
 
   return {
@@ -330,10 +318,10 @@ export function buildCreateOrderInstruction(
   writeU64LE(data, tl < BigInt(0) ? tl + (BigInt(1) << BigInt(64)) : tl, 56);
 
   const keys: AccountMeta[] = [
-    { pubkey: input.payer,         isSigner: true,  isWritable: true  },
-    { pubkey: orderPda,            isSigner: false, isWritable: true  },
-    { pubkey: input.mint,          isSigner: false, isWritable: false },
-    { pubkey: input.beneficiary,   isSigner: false, isWritable: false },
+    { pubkey: input.payer, isSigner: true, isWritable: true },
+    { pubkey: orderPda, isSigner: false, isWritable: true },
+    { pubkey: input.mint, isSigner: false, isWritable: false },
+    { pubkey: input.beneficiary, isSigner: false, isWritable: false },
     { pubkey: input.refundAddress, isSigner: false, isWritable: false },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
@@ -371,10 +359,10 @@ export function buildClaimOrderInstruction(
   input.preimageBytes.copy(data, 8);
 
   const keys: AccountMeta[] = [
-    { pubkey: input.claimer,             isSigner: true,  isWritable: true  },
-    { pubkey: input.orderPda,            isSigner: false, isWritable: true  },
-    { pubkey: input.beneficiaryAccount,  isSigner: false, isWritable: true  },
-    { pubkey: SystemProgram.programId,   isSigner: false, isWritable: false },
+    { pubkey: input.claimer, isSigner: true, isWritable: true },
+    { pubkey: input.orderPda, isSigner: false, isWritable: true },
+    { pubkey: input.beneficiaryAccount, isSigner: false, isWritable: true },
+    { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({ keys, programId, data });
@@ -404,11 +392,11 @@ export function buildRefundOrderInstruction(
   const data = Buffer.from(IX_REFUND_ORDER);
 
   const keys: AccountMeta[] = [
-    { pubkey: input.refunder,          isSigner: true,  isWritable: true  },
-    { pubkey: input.orderPda,          isSigner: false, isWritable: true  },
-    { pubkey: input.refundAccount,     isSigner: false, isWritable: true  },
+    { pubkey: input.refunder, isSigner: true, isWritable: true },
+    { pubkey: input.orderPda, isSigner: false, isWritable: true },
+    { pubkey: input.refundAccount, isSigner: false, isWritable: true },
     { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-    { pubkey: SYSVAR_CLOCK_PUBKEY,     isSigner: false, isWritable: false },
+    { pubkey: SYSVAR_CLOCK_PUBKEY, isSigner: false, isWritable: false },
   ];
 
   return new TransactionInstruction({ keys, programId, data });
@@ -425,11 +413,13 @@ export class SolanaHTLCClient {
   private readonly validateBeforeSubmit: boolean;
 
   constructor(opts: SolanaHTLCClientOptions) {
-    const rpcUrl = validateRpcUrl(opts.rpcUrl, "solana.rpcUrl");
-    const simulation = opts.programId === "PLACEHOLDER";
-    const programId = simulation ? opts.programId : validateSolanaAddress(opts.programId, "solana.programId");
+    const rpcUrl = validateRpcUrl(opts.rpcUrl, 'solana.rpcUrl', { allowHttp: opts.allowHttp });
+    const simulation = opts.programId === 'PLACEHOLDER';
+    const programId = simulation
+      ? opts.programId
+      : validateSolanaAddress(opts.programId, 'solana.programId');
     this.programId = programId;
-    this.commitment = opts.commitment ?? "confirmed";
+    this.commitment = opts.commitment ?? 'confirmed';
     this.connection = new Connection(rpcUrl, this.commitment);
     this.validateBeforeSubmit = opts.validateBeforeSubmit ?? false;
 
@@ -439,8 +429,8 @@ export class SolanaHTLCClient {
     if (this.simulation) {
       this.programPk = null;
       console.warn(
-        "[SolanaHTLCClient] No program id configured — running in simulation mode. " +
-        "All mutating calls return mock signatures."
+        '[SolanaHTLCClient] No program id configured — running in simulation mode. ' +
+          'All mutating calls return mock signatures.'
       );
     } else {
       this.programPk = new PublicKey(programId);
@@ -476,11 +466,9 @@ export class SolanaHTLCClient {
    */
   deriveOrderId(hashlockHex: HexString): string {
     if (!this.programPk) {
-      throw new Error(
-        "Cannot derive orderId in simulation mode — no programId configured."
-      );
+      throw new Error('Cannot derive orderId in simulation mode — no programId configured.');
     }
-    const hashlockBytes = hex32ToBuffer(hashlockHex, "hashlock");
+    const hashlockBytes = hex32ToBuffer(hashlockHex, 'hashlock');
     const [pda] = deriveOrderPda(hashlockBytes, this.programPk);
     return pda.toBase58();
   }
@@ -507,23 +495,23 @@ export class SolanaHTLCClient {
     signer: SolanaSigner
   ): Promise<{ txSignature: TransactionSignature; orderId: string }> {
     if (this.simulation) {
-      const mockSig = "SIMULATION_" + input.hashlockHex.slice(2, 18);
-      console.warn("[SolanaHTLCClient] simulation createOrder →", mockSig);
-      return { txSignature: mockSig, orderId: "sim-" + input.hashlockHex.slice(2, 18) };
+      const mockSig = 'SIMULATION_' + input.hashlockHex.slice(2, 18);
+      console.warn('[SolanaHTLCClient] simulation createOrder →', mockSig);
+      return { txSignature: mockSig, orderId: 'sim-' + input.hashlockHex.slice(2, 18) };
     }
 
     const programPk = this.programPk!;
-    const hashlockBytes = hex32ToBuffer(input.hashlockHex, "hashlock");
+    const hashlockBytes = hex32ToBuffer(input.hashlockHex, 'hashlock');
     const nowSeconds = Math.floor(Date.now() / 1000);
     const timelockAbsolute = nowSeconds + input.timelockSeconds;
 
     // ── Pre-submission account validation (#715) ──────────────────────────
     if (this.validateBeforeSubmit) {
       const validation = await validateCreateOrderParams(this.connection, programPk, {
-        sender:        input.sender,
-        beneficiary:   input.beneficiary,
+        sender: input.sender,
+        beneficiary: input.beneficiary,
         refundAddress: input.refundAddress,
-        mint:          input.mint,
+        mint: input.mint,
         hashlockBytes,
       });
       if (!validation.valid) {
@@ -531,23 +519,23 @@ export class SolanaHTLCClient {
         throw new AccountValidationError(
           first.code,
           `create_order validation failed: ${first.message}` +
-          (validation.errors.length > 1
-            ? ` (and ${validation.errors.length - 1} more error(s))`
-            : ""),
+            (validation.errors.length > 1
+              ? ` (and ${validation.errors.length - 1} more error(s))`
+              : ''),
           first.context
         );
       }
       for (const w of validation.warnings) {
-        console.warn("[SolanaHTLCClient] createOrder validation warning:", w);
+        console.warn('[SolanaHTLCClient] createOrder validation warning:', w);
       }
     }
 
     const { instruction, orderPda } = buildCreateOrderInstruction(programPk, {
-      payer:         signer.publicKey,
-      beneficiary:   new PublicKey(input.beneficiary),
+      payer: signer.publicKey,
+      beneficiary: new PublicKey(input.beneficiary),
       refundAddress: new PublicKey(input.refundAddress),
-      mint:          new PublicKey(input.mint),
-      amount:        input.amount,
+      mint: new PublicKey(input.mint),
+      amount: input.amount,
       safetyDeposit: input.safetyDeposit,
       hashlockBytes,
       timelockAbsolute,
@@ -573,14 +561,14 @@ export class SolanaHTLCClient {
     signer: SolanaSigner
   ): Promise<TransactionSignature> {
     if (this.simulation) {
-      const mockSig = "SIMULATION_CLAIM_" + orderId.slice(0, 8);
-      console.warn("[SolanaHTLCClient] simulation claimOrder →", mockSig);
+      const mockSig = 'SIMULATION_CLAIM_' + orderId.slice(0, 8);
+      console.warn('[SolanaHTLCClient] simulation claimOrder →', mockSig);
       return mockSig;
     }
 
     const programPk = this.programPk!;
     const orderPda = new PublicKey(orderId);
-    const preimageBytes = hex32ToBuffer(preimage, "preimage");
+    const preimageBytes = hex32ToBuffer(preimage, 'preimage');
 
     // ── Pre-submission account validation (#715) ──────────────────────────
     if (this.validateBeforeSubmit) {
@@ -596,12 +584,12 @@ export class SolanaHTLCClient {
         );
       }
       for (const w of validation.warnings) {
-        console.warn("[SolanaHTLCClient] claimOrder validation warning:", w);
+        console.warn('[SolanaHTLCClient] claimOrder validation warning:', w);
       }
     }
 
     const ix = buildClaimOrderInstruction(programPk, {
-      claimer:            signer.publicKey,
+      claimer: signer.publicKey,
       orderPda,
       // For native SOL the beneficiary system account receives the lamports;
       // for SPL tokens callers should pass the ATA.  We use signer.publicKey
@@ -622,13 +610,10 @@ export class SolanaHTLCClient {
    * @param orderId  Base-58 PDA address.
    * @param signer   Wallet controlling the refund_address stored in the order.
    */
-  async refundOrder(
-    orderId: string,
-    signer: SolanaSigner
-  ): Promise<TransactionSignature> {
+  async refundOrder(orderId: string, signer: SolanaSigner): Promise<TransactionSignature> {
     if (this.simulation) {
-      const mockSig = "SIMULATION_REFUND_" + orderId.slice(0, 8);
-      console.warn("[SolanaHTLCClient] simulation refundOrder →", mockSig);
+      const mockSig = 'SIMULATION_REFUND_' + orderId.slice(0, 8);
+      console.warn('[SolanaHTLCClient] simulation refundOrder →', mockSig);
       return mockSig;
     }
 
@@ -649,12 +634,12 @@ export class SolanaHTLCClient {
         );
       }
       for (const w of validation.warnings) {
-        console.warn("[SolanaHTLCClient] refundOrder validation warning:", w);
+        console.warn('[SolanaHTLCClient] refundOrder validation warning:', w);
       }
     }
 
     const ix = buildRefundOrderInstruction(programPk, {
-      refunder:      signer.publicKey,
+      refunder: signer.publicKey,
       orderPda,
       refundAccount: signer.publicKey,
     });
@@ -673,7 +658,9 @@ export class SolanaHTLCClient {
     const tx = new Transaction({ recentBlockhash: blockhash, feePayer: signer.publicKey });
     tx.add(...instructions);
     const signed = await signer.signTransaction(tx);
-    const sig = await this.connection.sendRawTransaction(signed.serialize());
+    const sig = await this.connection.sendRawTransaction(
+      signed.serialize({ verifySignatures: false })
+    );
     await this.connection.confirmTransaction(sig, this.commitment);
     return sig;
   }
