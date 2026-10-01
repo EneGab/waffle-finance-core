@@ -29,6 +29,8 @@ import {
   buildClaimOrderInstruction,
   buildRefundOrderInstruction,
   NATIVE_SOL_MINT,
+  deserialiseOrderAccount,
+  OrderStatus,
   SolanaRpcProvider,
   createSolanaRpcProvider,
 } from "@wafflefinance/sdk/solana";
@@ -167,10 +169,98 @@ export class SolanaDisabledError extends Error {
 
 /** Thrown on Solana RPC or transaction submission failures. */
 export class SolanaSubmissionError extends Error {
-  constructor(message: string, public readonly cause?: unknown) {
+  constructor(
+    message: string,
+    public readonly cause?: unknown,
+    public readonly signature?: string
+  ) {
     super(message);
     this.name = "SolanaSubmissionError";
   }
+}
+
+export function assertSolanaTransactionSucceeded(
+  signature: string,
+  operation: "claim" | "refund",
+  transactionError: unknown
+): void {
+  if (transactionError !== null && transactionError !== undefined) {
+    throw new SolanaSubmissionError(
+      `Solana ${operation} transaction ${signature} was confirmed with an on-chain error`,
+      transactionError,
+      signature
+    );
+  }
+}
+
+export type SolanaTerminalOrderStatus =
+  | typeof OrderStatus.Claimed
+  | typeof OrderStatus.Refunded;
+
+export interface SolanaOrderStatusVerificationOptions {
+  orderId: string;
+  signature: string;
+  expectedStatus: SolanaTerminalOrderStatus;
+  readStatus: () => Promise<number | null>;
+  attempts?: number;
+  retryDelayMs?: number;
+}
+
+/**
+ * Wait until the order account reflects the confirmed claim/refund. A
+ * successful send or confirmation response alone is not enough to report a
+ * settlement success to callers.
+ */
+export async function verifySolanaOrderStatus(
+  opts: SolanaOrderStatusVerificationOptions
+): Promise<void> {
+  const attempts = opts.attempts ?? 10;
+  const retryDelayMs = opts.retryDelayMs ?? 500;
+  const expectedName = opts.expectedStatus === OrderStatus.Claimed ? "claimed" : "refunded";
+  let observedStatus: number | null = null;
+  let lastReadError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      observedStatus = await opts.readStatus();
+      lastReadError = undefined;
+
+      if (observedStatus === opts.expectedStatus) return;
+
+      if (
+        observedStatus !== null &&
+        observedStatus !== OrderStatus.Active &&
+        observedStatus !== opts.expectedStatus
+      ) {
+        const actualName = observedStatus === OrderStatus.Claimed ? "claimed" : "refunded";
+        throw new SolanaSubmissionError(
+          `Solana order ${opts.orderId} is ${actualName} on-chain; expected ${expectedName} ` +
+          `(signature ${opts.signature})`,
+          undefined,
+          opts.signature
+        );
+      }
+    } catch (err) {
+      if (err instanceof SolanaSubmissionError) throw err;
+      lastReadError = err;
+    }
+
+    if (attempt < attempts) {
+      await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  const observed = observedStatus === null
+    ? "not yet visible"
+    : observedStatus === OrderStatus.Active
+      ? "still active"
+      : `in unexpected status ${observedStatus}`;
+  throw new SolanaSubmissionError(
+    `Solana ${expectedName} transaction ${opts.signature} was submitted, but order ` +
+    `${opts.orderId} is ${observed} after ${attempts} verification attempt(s)`,
+    lastReadError,
+    opts.signature
+  );
 }
 
 /**
@@ -257,6 +347,19 @@ class ConfiguredSolanaIntegration implements SolanaIntegration {
 
   isEnabled(): boolean {
     return true;
+  }
+
+  private async readOrderStatus(orderId: string): Promise<number | null> {
+    const orderPda = new PublicKey(orderId);
+    const info = await this.rpcProvider.withFallback(
+      (conn) => conn.getAccountInfo(orderPda, this.commitment),
+      `getAccountInfo(${orderId.slice(0, 8)}…)`
+    );
+    if (!info) return null;
+    if (!info.owner.equals(this.programPk)) {
+      throw new Error(`Solana order ${orderId} is owned by ${info.owner.toBase58()}, not the configured HTLC program`);
+    }
+    return deserialiseOrderAccount(Buffer.from(info.data), orderId).status;
   }
 
   validateAddress(address: string): boolean {
@@ -373,6 +476,7 @@ class ConfiguredSolanaIntegration implements SolanaIntegration {
       preimageBytes,
     });
 
+    let signature: string | undefined;
     try {
       const { blockhash } = await this.rpcProvider.withFallback(
         (conn) => conn.getLatestBlockhash(this.commitment),
@@ -385,37 +489,44 @@ class ConfiguredSolanaIntegration implements SolanaIntegration {
       tx.add(ix);
       tx.partialSign(this.keypair);
 
-      const sig = await this.rpcProvider.withFallback(
+      const submittedSignature = await this.rpcProvider.withFallback(
         (conn) => conn.sendRawTransaction(tx.serialize(), {
           skipPreflight: false,
           maxRetries: 3,
         }),
         "sendRawTransaction(claim)"
       );
-      await this.rpcProvider.withFallback(
-        (conn) => conn.confirmTransaction(sig, this.commitment),
+      signature = submittedSignature;
+      const confirmation = await this.rpcProvider.withFallback(
+        (conn) => conn.confirmTransaction(submittedSignature, this.commitment),
         "confirmTransaction(claim)"
       );
+      assertSolanaTransactionSucceeded(submittedSignature, "claim", confirmation.value.err);
 
-      const slot = await this.rpcProvider.withFallback(
-        (conn) => conn.getSlot(this.commitment),
-        "getSlot(claim)"
-      );
+      await verifySolanaOrderStatus({
+        orderId: params.orderId,
+        signature: submittedSignature,
+        expectedStatus: OrderStatus.Claimed,
+        readStatus: () => this.readOrderStatus(params.orderId),
+      });
 
       this.log.info(
-        { signature: sig, orderId: params.orderId, slot },
-        "Solana claim transaction confirmed"
+        { signature: submittedSignature, orderId: params.orderId, slot: confirmation.context.slot },
+        "Solana claim transaction confirmed and verified on-chain"
       );
 
       return {
-        signature: sig,
-        blockNumber: slot,
+        signature: submittedSignature,
+        blockNumber: confirmation.context.slot,
       };
     } catch (err) {
       this.log.error({ err, orderId: params.orderId }, "Solana claim submission failed");
+      if (err instanceof SolanaSubmissionError) throw err;
       throw new SolanaSubmissionError(
-        `Solana claim submission failed: ${err instanceof Error ? err.message : String(err)}`,
-        err
+        `Solana claim submission failed${signature ? ` (signature ${signature})` : ""}: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+        err,
+        signature
       );
     }
   }
@@ -438,6 +549,7 @@ class ConfiguredSolanaIntegration implements SolanaIntegration {
       refundAccount: this.keypair.publicKey,
     });
 
+    let signature: string | undefined;
     try {
       const { blockhash } = await this.rpcProvider.withFallback(
         (conn) => conn.getLatestBlockhash(this.commitment),
@@ -450,37 +562,44 @@ class ConfiguredSolanaIntegration implements SolanaIntegration {
       tx.add(ix);
       tx.partialSign(this.keypair);
 
-      const sig = await this.rpcProvider.withFallback(
+      const submittedSignature = await this.rpcProvider.withFallback(
         (conn) => conn.sendRawTransaction(tx.serialize(), {
           skipPreflight: false,
           maxRetries: 3,
         }),
         "sendRawTransaction(refund)"
       );
-      await this.rpcProvider.withFallback(
-        (conn) => conn.confirmTransaction(sig, this.commitment),
+      signature = submittedSignature;
+      const confirmation = await this.rpcProvider.withFallback(
+        (conn) => conn.confirmTransaction(submittedSignature, this.commitment),
         "confirmTransaction(refund)"
       );
+      assertSolanaTransactionSucceeded(submittedSignature, "refund", confirmation.value.err);
 
-      const slot = await this.rpcProvider.withFallback(
-        (conn) => conn.getSlot(this.commitment),
-        "getSlot(refund)"
-      );
+      await verifySolanaOrderStatus({
+        orderId: params.orderId,
+        signature: submittedSignature,
+        expectedStatus: OrderStatus.Refunded,
+        readStatus: () => this.readOrderStatus(params.orderId),
+      });
 
       this.log.info(
-        { signature: sig, orderId: params.orderId, slot },
-        "Solana refund transaction confirmed"
+        { signature: submittedSignature, orderId: params.orderId, slot: confirmation.context.slot },
+        "Solana refund transaction confirmed and verified on-chain"
       );
 
       return {
-        signature: sig,
-        blockNumber: slot,
+        signature: submittedSignature,
+        blockNumber: confirmation.context.slot,
       };
     } catch (err) {
       this.log.error({ err, orderId: params.orderId }, "Solana refund submission failed");
+      if (err instanceof SolanaSubmissionError) throw err;
       throw new SolanaSubmissionError(
-        `Solana refund submission failed: ${err instanceof Error ? err.message : String(err)}`,
-        err
+        `Solana refund submission failed${signature ? ` (signature ${signature})` : ""}: ` +
+        `${err instanceof Error ? err.message : String(err)}`,
+        err,
+        signature
       );
     }
   }

@@ -15,7 +15,9 @@ import {
   createSolanaIntegration,
   SolanaDisabledError,
   SolanaSubmissionError,
+  assertSolanaTransactionSucceeded,
   isConfiguredSolana,
+  verifySolanaOrderStatus,
   type SolanaIntegration,
 } from "../src/services/solana-contract.js";
 
@@ -24,6 +26,75 @@ describe("Solana Integration Contract", () => {
 
   beforeEach(() => {
     log = pino({ level: "silent" });
+  });
+
+  describe("post-submit order verification", () => {
+    it("rejects a confirmed transaction that contains an on-chain execution error", () => {
+      const executionError = { InstructionError: [0, "Custom"] };
+
+      expect(() => assertSolanaTransactionSucceeded(
+        "failed-claim-signature",
+        "claim",
+        executionError
+      )).toThrow(SolanaSubmissionError);
+      expect(() => assertSolanaTransactionSucceeded(
+        "failed-claim-signature",
+        "claim",
+        executionError
+      )).toThrow("on-chain error");
+    });
+
+    it("waits for a delayed claim status to become visible on-chain", async () => {
+      const statuses = [0, 1];
+      const readStatus = vi.fn(async () => statuses.shift() ?? null);
+
+      await expect(verifySolanaOrderStatus({
+        orderId: "sol-order-claim",
+        signature: "claim-signature",
+        expectedStatus: 1,
+        readStatus,
+        attempts: 2,
+        retryDelayMs: 0,
+      })).resolves.toBeUndefined();
+
+      expect(readStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not report success when the confirmed transaction leaves the order active", async () => {
+      const readStatus = vi.fn().mockResolvedValue(0);
+
+      await expect(verifySolanaOrderStatus({
+        orderId: "sol-order-claim",
+        signature: "claim-signature",
+        expectedStatus: 1,
+        readStatus,
+        attempts: 2,
+        retryDelayMs: 0,
+      })).rejects.toMatchObject({
+        name: "SolanaSubmissionError",
+        signature: "claim-signature",
+      });
+
+      expect(readStatus).toHaveBeenCalledTimes(2);
+    });
+
+    it("rejects a refund when the on-chain order is already claimed", async () => {
+      const readStatus = vi.fn().mockResolvedValue(1);
+
+      await expect(verifySolanaOrderStatus({
+        orderId: "sol-order-refund",
+        signature: "refund-signature",
+        expectedStatus: 2,
+        readStatus,
+        attempts: 5,
+        retryDelayMs: 0,
+      })).rejects.toMatchObject({
+        name: "SolanaSubmissionError",
+        signature: "refund-signature",
+      });
+
+      expect(readStatus).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("Placeholder Mode", () => {
