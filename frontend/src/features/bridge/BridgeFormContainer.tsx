@@ -40,6 +40,8 @@ export interface BridgeFormProps {
   stellarAddress: string;
   solanaAddress?: string;
   signStellarTransaction: (xdr: string, networkPassphrase?: string) => Promise<string>;
+  /** When true, submission is blocked due to a wallet mismatch or disconnection. */
+  walletBlocked?: boolean;
 }
 
 const ETH_TOKEN = { symbol: 'ETH', name: 'Ethereum',      logo: '/images/eth.png', chain: 'Ethereum', decimals: 18 };
@@ -279,7 +281,7 @@ function directionToChains(dir: BridgeDirection): { srcChain: SupportedChain; ds
   return { srcChain: resolve(parts[0]), dstChain: resolve(parts[1]) };
 }
 
-export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, signStellarTransaction }: BridgeFormProps): React.JSX.Element {
+export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, signStellarTransaction, walletBlocked = false }: BridgeFormProps): React.JSX.Element {
   // ── wagmi v2 hooks ──────────────────────────────────────────────────────
   // sendTransactionAsync returns a tx hash immediately after the user signs;
   // we then poll for the receipt exactly as before.
@@ -1829,7 +1831,9 @@ export default function BridgeForm({ ethAddress, stellarAddress, solanaAddress, 
                 : 'cursor-not-allowed border border-white/5 bg-slate-700/45 text-slate-400'
             }`}
           >
-            {recoveryNotice
+            {walletBlocked
+              ? 'Fix Wallet Issue Above'
+              : recoveryNotice
               ? 'Reconnect Wallet'
               : !routeValidator.walletsReady
               ? 'Connect Wallet'
