@@ -470,6 +470,9 @@ importers:
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3
+      '@wafflefinance/sdk':
+        specifier: workspace:*
+        version: link:../packages/sdk
       supertest:
         specifier: ^7.2.2
         version: 7.2.2
@@ -4651,7 +4654,7 @@ packages:
       '@vitest/spy': 2.1.9
       estree-walker: 3.0.3
       magic-string: 0.30.21
-      vite: 5.4.21(@types/node@22.20.1)
+      vite: 5.4.21(@types/node@20.19.43)
     dev: true
 
   /@vitest/pretty-format@2.1.9:
