@@ -275,7 +275,10 @@ export {
   isTimeoutTransition,
   isFailureTransition,
   estimateTimelockRemaining,
+  classifyRpcError,
+  retryAsync,
 } from "./shared-utils/index.js";
+export type { RetryPolicy } from "./shared-utils/index.js";
 
 // Solana — normalised adapter
 export { SolanaHTLCAdapter } from "./solana/adapter.js";
